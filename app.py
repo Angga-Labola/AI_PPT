@@ -3,25 +3,30 @@ import ipaddress
 import os
 import socket
 import time
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from config import (
+    API_KEY,
     MAX_UPLOAD_BYTES,
     MAX_UPLOADS,
     MAX_UPLOAD_TOTAL_BYTES,
     MAX_URLS,
     MAX_URL_LENGTH,
+    MAX_SOURCE_CHARS,
     OUTPUT_DIR,
 )
-from jobs import active_job, create_job, delete_job, get_job, init_db, list_jobs, request_cancel
+from deck_generator import generate_presentation
 from logging_config import configure_logging
+from sources import collect_source_text, extract_document
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -30,9 +35,8 @@ logger = configure_logging().getChild("web")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_db()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info("Application started; presentation storage is %s", OUTPUT_DIR)
+    logger.info("Application started; PowerPoints are stored in %s", OUTPUT_DIR)
     yield
 
 
@@ -82,52 +86,39 @@ def _validate_url(url: str) -> None:
         raise HTTPException(400, "The source URL could not be resolved.") from error
 
 
-def _job_json(job: dict) -> dict:
-    return {
-        "id": job["id"],
-        "status": job["status"],
-        "progress": job["progress"],
-        "created_at": job["created_at"],
-        "updated_at": job["updated_at"],
-        "title": job["title"],
-        "error": job["error"],
-        "filename": Path(job["output_path"]).name if job["output_path"] else "",
-    }
-
-
 @app.get("/")
 async def home(request: Request):
     return templates.TemplateResponse(request, "index.html")
 
 
-@app.get("/api/jobs/active")
-async def get_active_job():
-    job = active_job()
-    return {"job": _job_json(job) if job else None}
+@app.get("/api/decks")
+async def list_decks():
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    decks = sorted(OUTPUT_DIR.glob("*.pptx"), key=lambda path: path.stat().st_mtime, reverse=True)
+    return {
+        "decks": [
+            {
+                "id": deck.name,
+                "title": deck.stem.rsplit("-", 1)[0].replace("-", " ").title(),
+                "filename": deck.name,
+                "updated_at": datetime.fromtimestamp(deck.stat().st_mtime, timezone.utc).isoformat(),
+            }
+            for deck in decks
+        ]
+    }
 
 
-@app.get("/api/jobs")
-async def get_jobs():
-    return {"jobs": [_job_json(job) for job in list_jobs()]}
-
-
-@app.get("/api/jobs/{job_id}")
-async def get_job_status(job_id: str):
-    job = get_job(job_id)
-    if not job:
-        raise HTTPException(404, "Request not found.")
-    return _job_json(job)
-
-
-@app.post("/api/jobs")
-async def submit_job(
+@app.post("/api/generate")
+async def generate_deck(
     text: str = Form(default=""),
     url: str = Form(default=""),
+    audience: str = Form(default="", max_length=120),
+    goal: str = Form(default="", max_length=300),
     files: list[UploadFile] = File(default=[]),
 ):
-    from sources import extract_document
-
     text = text.strip()
+    audience = audience.strip()
+    goal = goal.strip()
     urls = [line.strip() for line in url.splitlines() if line.strip()]
     if not text and not urls and not files:
         raise HTTPException(400, "Add text, a document, or a URL to start.")
@@ -138,8 +129,17 @@ async def submit_job(
     for source_url in urls:
         _validate_url(source_url)
 
-    parts = [text] if text else []
+    if not API_KEY:
+        raise HTTPException(503, "GOOGLE_API_KEY is not configured.")
+    parts = []
+    source_catalog = {}
+    if text:
+        source_id = f"S{len(source_catalog) + 1}"
+        source_catalog[source_id] = "Pasted notes"
+        parts.append(f"[{source_id}] Pasted notes:\n{text}")
     total_bytes = 0
+    if len(text) > MAX_SOURCE_CHARS:
+        raise HTTPException(413, f"Pasted text must be {MAX_SOURCE_CHARS:,} characters or fewer.")
     for upload in files:
         content = await upload.read(MAX_UPLOAD_BYTES + 1)
         total_bytes += len(content)
@@ -149,43 +149,39 @@ async def submit_job(
             extracted = await asyncio.to_thread(extract_document, upload.filename or "document", content)
         except Exception as error:
             raise HTTPException(400, str(error)) from error
-        parts.append(f"Document: {upload.filename}\n{extracted}")
+        source_id = f"S{len(source_catalog) + 1}"
+        source_catalog[source_id] = f"Document: {upload.filename}"
+        parts.append(f"[{source_id}] Document: {upload.filename}\n{extracted}")
     if total_bytes > MAX_UPLOAD_TOTAL_BYTES:
         raise HTTPException(413, "Combined document uploads must be 15 MB or smaller.")
+    url_source_start = len(source_catalog)
+    for index, source_url in enumerate(urls, start=1):
+        source_catalog[f"S{url_source_start + index}"] = source_url
+    request_id = uuid.uuid4().hex
     try:
-        job = create_job("\n\n".join(parts), "\n".join(urls))
-    except RuntimeError as error:
-        logger.info("Rejected new request because another job is active")
-        raise HTTPException(409, str(error)) from error
-    logger.info(
-        "Queued job %s with %d URLs, %d documents, and %d extracted text characters",
-        job["id"],
-        len(urls),
-        len(files),
-        sum(map(len, parts)),
-    )
-    return JSONResponse(_job_json(job), status_code=202)
+        source_text = await asyncio.to_thread(
+            collect_source_text,
+            "\n\n".join(parts),
+            "\n".join(urls),
+            request_id,
+            url_source_start,
+        )
+        output_path = await asyncio.to_thread(
+            generate_presentation,
+            request_id,
+            source_text,
+            urls,
+            audience,
+            goal,
+            source_catalog,
+        )
+    except ValueError as error:
+        logger.warning("Generation request %s rejected: %s", request_id, error)
+        raise HTTPException(400, str(error)) from error
+    except Exception as error:
+        logger.exception("Generation request %s failed", request_id)
+        raise HTTPException(502, "PowerPoint generation failed. Check server logs.") from error
 
-
-@app.post("/api/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str):
-    job = request_cancel(job_id)
-    if not job:
-        raise HTTPException(404, "Request not found.")
-    if job["status"] in {"completed", "failed"}:
-        raise HTTPException(409, "This request has already finished.")
-    logger.info("Cancellation requested for job %s", job_id)
-    return _job_json(job)
-
-
-@app.get("/api/decks/{job_id}/download")
-async def download_deck(job_id: str):
-    job = get_job(job_id)
-    if not job or job["status"] != "completed":
-        raise HTTPException(404, "PowerPoint not found.")
-    output_path = Path(job["output_path"]).resolve()
-    if output_path.parent != OUTPUT_DIR.resolve() or not output_path.is_file():
-        raise HTTPException(404, "PowerPoint file is missing.")
     return FileResponse(
         output_path,
         filename=output_path.name,
@@ -193,16 +189,29 @@ async def download_deck(job_id: str):
     )
 
 
-@app.delete("/api/decks/{job_id}")
-async def remove_deck(job_id: str):
-    job = get_job(job_id)
-    if not job or job["status"] != "completed":
+@app.get("/api/decks/{filename}/download")
+async def download_deck(filename: str):
+    if Path(filename).name != filename or not filename.lower().endswith(".pptx"):
         raise HTTPException(404, "PowerPoint not found.")
-    output_path = Path(job["output_path"]).resolve()
-    if output_path.parent == OUTPUT_DIR.resolve():
-        output_path.unlink(missing_ok=True)
-    delete_job(job_id)
-    logger.info("Deleted presentation for job %s", job_id)
+    output_path = (OUTPUT_DIR / filename).resolve()
+    if output_path.parent != OUTPUT_DIR.resolve() or not output_path.is_file():
+        raise HTTPException(404, "PowerPoint not found.")
+    return FileResponse(
+        output_path,
+        filename=output_path.name,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+
+@app.delete("/api/decks/{filename}")
+async def remove_deck(filename: str):
+    if Path(filename).name != filename or not filename.lower().endswith(".pptx"):
+        raise HTTPException(404, "PowerPoint not found.")
+    output_path = (OUTPUT_DIR / filename).resolve()
+    if output_path.parent != OUTPUT_DIR.resolve() or not output_path.is_file():
+        raise HTTPException(404, "PowerPoint not found.")
+    output_path.unlink()
+    logger.info("Deleted presentation %s", filename)
     return {"deleted": True}
 
 

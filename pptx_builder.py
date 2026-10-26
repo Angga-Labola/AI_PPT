@@ -35,7 +35,7 @@ def _add_text(slide, text: str, left, top, width, height, *, size, color, bold=F
     return shape
 
 
-def build_presentation(deck, path: Path) -> None:
+def build_presentation(deck, path: Path, source_catalog: dict[str, str] | None = None) -> None:
     presentation = Presentation()
     presentation.slide_width = Inches(13.333)
     presentation.slide_height = Inches(7.5)
@@ -83,6 +83,35 @@ def build_presentation(deck, path: Path) -> None:
             paragraph.font.color.rgb = INK
             paragraph.space_after = Pt(18)
             paragraph.level = 0
+        citation = slide.shapes.add_textbox(
+            Inches(0.9), Inches(6.72), Inches(11.5), Inches(0.48)
+        )
+        citation_frame = citation.text_frame
+        citation_frame.clear()
+        citation_frame.word_wrap = True
+        citation_paragraph = citation_frame.paragraphs[0]
+        citation_label = citation_paragraph.add_run()
+        citation_label.text = "Sources: "
+        citation_label.font.name = "Aptos"
+        citation_label.font.size = Pt(10)
+        citation_label.font.color.rgb = MUTED
+        for source_index, source_id in enumerate(item.sources):
+            if source_index:
+                separator = citation_paragraph.add_run()
+                separator.text = ", "
+                separator.font.size = Pt(10)
+                separator.font.color.rgb = MUTED
+            source_run = citation_paragraph.add_run()
+            source_name = (source_catalog or {}).get(source_id, "")
+            source_run.text = (
+                f"{source_id} ({source_name[:48]})" if source_name and not source_name.startswith(("http://", "https://"))
+                else source_id
+            )
+            source_run.font.name = "Aptos"
+            source_run.font.size = Pt(10)
+            source_run.font.color.rgb = MUTED
+            if source_name.startswith(("http://", "https://")):
+                source_run.hyperlink.address = source_name
         footer = slide.shapes.add_shape(
             MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.34), Inches(13.333), Inches(0.16)
         )

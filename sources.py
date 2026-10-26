@@ -10,7 +10,6 @@ from pypdf import PdfReader
 from pptx import Presentation
 
 from config import MAX_SOURCE_CHARS
-from jobs import update_job
 from logging_config import configure_logging
 
 
@@ -61,16 +60,23 @@ def _fetch_url(url: str) -> str:
     raise ValueError("The source URL redirected too many times.")
 
 
-def collect_source_text(input_text: str, source_url: str, job_id: str) -> str:
+def collect_source_text(
+    input_text: str,
+    source_url: str,
+    request_id: str = "",
+    source_id_offset: int = 0,
+) -> str:
     urls = [line.strip() for line in source_url.splitlines() if line.strip()]
-    headers = [f"Content from {url}:\n" for url in urls]
+    headers = [
+        f"[S{source_id_offset + index}] Web source: {url}\n"
+        for index, url in enumerate(urls, start=1)
+    ]
     available_chars = max(0, MAX_SOURCE_CHARS - sum(len(header) for header in headers))
     section_count = len(urls) + bool(input_text.strip())
     section_budget = available_chars // max(1, section_count)
     parts = [input_text.strip()[:section_budget]] if input_text.strip() else []
     for index, (url, header) in enumerate(zip(urls, headers), start=1):
-        update_job(job_id, progress=f"Reading source {index} of {len(urls)}")
-        logger.info("Job %s: reading web source %d/%d", job_id, index, len(urls))
+        logger.info("Request %s: reading web source %d/%d", request_id, index, len(urls))
         parts.append(f"{header}{_fetch_url(url)[:section_budget]}")
     combined = "\n\n".join(parts)
     if not combined.strip():

@@ -30,6 +30,17 @@
           <label class="field-label" for="source-text">Your notes <span>Optional</span></label>
           <textarea id="source-text" name="text" rows="6" placeholder="Paste research, a brief, meeting notes, or a rough idea..."></textarea>
 
+          <div class="input-grid preferences-grid">
+            <div class="source-block">
+              <label class="field-label" for="audience">Audience <span>Optional</span></label>
+              <input id="audience" name="audience" type="text" maxlength="120" placeholder="e.g. New customers, executives">
+            </div>
+            <div class="source-block">
+              <label class="field-label" for="goal">Presentation goal <span>Optional</span></label>
+              <input id="goal" name="goal" type="text" maxlength="300" placeholder="e.g. Explain the launch plan and align the team">
+            </div>
+          </div>
+
           <div class="input-grid">
             <div class="source-block">
               <label class="field-label" for="source-url">Web sources <span>Optional · up to 10</span></label>
@@ -39,7 +50,7 @@
               <span class="field-label">Documents <span>Optional</span></span>
               <label class="upload-zone" for="source-files">
                 <span class="upload-icon" aria-hidden="true">＋</span>
-                <span><b>Add files</b><small>PPTX, PDF, DOCX, TXT, MD · up to 10, 10 MB each</small></span>
+                <span><b>Add files</b><small>PPTX, PDF, DOCX, TXT, MD · up to 10; 4 MB total on Vercel</small></span>
                 <input id="source-files" name="files" type="file" accept=".pptx,.pdf,.docx,.txt,.md" multiple hidden>
               </label>
             </div>
@@ -57,7 +68,7 @@
           <div class="active-top"><div><div class="eyebrow"><span>02</span> IN PROGRESS</div><h2 id="active-title">Preparing your deck</h2></div><span id="status-pill" class="status-pill">Queued</span></div>
           <p id="active-progress" class="active-progress">Waiting for the worker</p>
           <div class="progress-track"><span id="progress-bar"></span></div>
-          <div class="active-actions"><span id="active-error" class="active-error"></span><button id="cancel-button" class="quiet-button" type="button">Cancel request</button></div>
+          <div class="active-actions"><span id="active-error" class="active-error"></span></div>
         </section>
       </section>
 

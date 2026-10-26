@@ -10,13 +10,9 @@ const activeError = document.querySelector("#active-error");
 const statusPill = document.querySelector("#status-pill");
 const progressTrack = document.querySelector(".progress-track");
 const progressBar = document.querySelector("#progress-bar");
-const cancelButton = document.querySelector("#cancel-button");
 const deckList = document.querySelector("#deck-list");
 const emptyLibrary = document.querySelector("#empty-library");
 const deckCount = document.querySelector("#deck-count");
-
-let activeJobId = null;
-let pollTimer = null;
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
@@ -55,33 +51,15 @@ function updateFileList() {
   });
 }
 
-function statusLabel(status) {
-  return ({
-    queued: "Queued",
-    running: "Working",
-    cancel_requested: "Cancelling",
-    completed: "Complete",
-    failed: "Failed",
-    cancelled: "Cancelled",
-  })[status] || status;
-}
-
-function renderActive(job) {
-  activeJobId = job.id;
+function renderGenerationState({ title, status, message, error = "", complete = false }) {
   activePanel.hidden = false;
-  activeTitle.textContent = job.title || "Preparing your deck";
-  activeProgress.textContent = job.progress || "Working on your presentation";
-  statusPill.textContent = statusLabel(job.status);
-  statusPill.dataset.status = job.status;
-  activeError.textContent = job.error || "";
-  const finished = ["completed", "failed", "cancelled"].includes(job.status);
-  submitButton.disabled = !finished;
-  cancelButton.hidden = finished;
-  cancelButton.disabled = job.status === "cancel_requested";
-  cancelButton.textContent = job.status === "cancel_requested" ? "Cancelling…" : "Cancel request";
-  progressTrack.classList.toggle("is-moving", !finished);
-  progressBar.style.width = job.status === "completed" ? "100%" : job.status === "failed" || job.status === "cancelled" ? "0%" : "26%";
-  if (finished) activeJobId = null;
+  activeTitle.textContent = title;
+  activeProgress.textContent = message;
+  statusPill.textContent = status;
+  statusPill.dataset.status = error ? "failed" : complete ? "completed" : "running";
+  activeError.textContent = error;
+  progressTrack.classList.toggle("is-moving", !complete && !error);
+  progressBar.style.width = complete ? "100%" : error ? "0%" : "26%";
 }
 
 function renderDeck(deck) {
@@ -102,7 +80,7 @@ function renderDeck(deck) {
   const actions = document.createElement("div");
   actions.className = "deck-actions";
   const download = document.createElement("a");
-  download.href = `/api/decks/${encodeURIComponent(deck.id)}/download`;
+  download.href = `/api/decks/${encodeURIComponent(deck.filename)}/download`;
   download.setAttribute("aria-label", `Download ${title.textContent}`);
   download.title = "Download PowerPoint";
   download.textContent = "↓";
@@ -114,7 +92,7 @@ function renderDeck(deck) {
   remove.addEventListener("click", async () => {
     if (!window.confirm(`Delete “${title.textContent}”?`)) return;
     try {
-      await api(`/api/decks/${encodeURIComponent(deck.id)}`, { method: "DELETE" });
+      await api(`/api/decks/${encodeURIComponent(deck.filename)}`, { method: "DELETE" });
       await loadDecks();
     } catch (error) {
       showError(error.message);
@@ -126,37 +104,10 @@ function renderDeck(deck) {
 }
 
 async function loadDecks() {
-  const { jobs } = await api("/api/jobs");
-  deckList.replaceChildren(...jobs.map(renderDeck));
-  deckCount.textContent = String(jobs.length);
-  emptyLibrary.hidden = jobs.length > 0;
-}
-
-async function pollActive() {
-  try {
-    const { job } = await api("/api/jobs/active");
-    if (job) {
-      renderActive(job);
-    } else if (activeJobId) {
-      const finishedJob = await api(`/api/jobs/${encodeURIComponent(activeJobId)}`);
-      renderActive(finishedJob);
-      if (finishedJob.status === "completed") await loadDecks();
-    }
-    if (!job && !activeJobId) stopPolling();
-  } catch (error) {
-    showError(error.message);
-    stopPolling();
-  }
-}
-
-function startPolling() {
-  clearInterval(pollTimer);
-  pollTimer = window.setInterval(pollActive, 1800);
-}
-
-function stopPolling() {
-  clearInterval(pollTimer);
-  pollTimer = null;
+  const { decks } = await api("/api/decks");
+  deckList.replaceChildren(...decks.map(renderDeck));
+  deckCount.textContent = String(decks.length);
+  emptyLibrary.hidden = decks.length > 0;
 }
 
 fileInput.addEventListener("change", updateFileList);
@@ -167,40 +118,55 @@ form.addEventListener("submit", async (event) => {
   const buttonText = submitButton.querySelector("span:first-child");
   submitButton.disabled = true;
   buttonText.textContent = "Sending sources…";
+  renderGenerationState({
+    title: "Creating your presentation",
+    status: "Working",
+    message: "Reading sources and generating slides. Keep this page open until the download starts.",
+  });
   try {
-    const job = await api("/api/jobs", { method: "POST", body: new FormData(form) });
-    renderActive(job);
-    activePanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    startPolling();
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      body: new FormData(form),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.detail || "PowerPoint generation failed. Check the server log.");
+    }
+    const file = await response.blob();
+    const disposition = response.headers.get("content-disposition") || "";
+    const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || "presentation.pptx";
+    const downloadUrl = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    renderGenerationState({
+      title: filename.replace(/-[^-]+\.pptx$/, "").replaceAll("-", " "),
+      status: "Complete",
+      message: "Your PowerPoint was downloaded and saved in the presentations folder.",
+      complete: true,
+    });
+    await loadDecks();
   } catch (error) {
     showError(error.message);
-    submitButton.disabled = false;
+    renderGenerationState({
+      title: "Generation failed",
+      status: "Failed",
+      message: "The presentation could not be generated.",
+      error: error.message,
+    });
   } finally {
+    submitButton.disabled = false;
     buttonText.textContent = "Draft presentation";
-  }
-});
-
-cancelButton.addEventListener("click", async () => {
-  if (!activeJobId) return;
-  cancelButton.disabled = true;
-  try {
-    const job = await api(`/api/jobs/${encodeURIComponent(activeJobId)}/cancel`, { method: "POST" });
-    renderActive(job);
-    startPolling();
-  } catch (error) {
-    showError(error.message);
-    cancelButton.disabled = false;
   }
 });
 
 async function initialize() {
   try {
     await loadDecks();
-    const { job } = await api("/api/jobs/active");
-    if (job) {
-      renderActive(job);
-      startPolling();
-    }
   } catch (error) {
     showError(error.message);
   }
