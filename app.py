@@ -13,6 +13,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from langgraph.errors import GraphRecursionError
 
 from config import (
     API_KEY,
@@ -28,7 +29,7 @@ from config import (
 )
 from deck_generator import generate_presentation
 from logging_config import configure_logging
-from sources import collect_source_text, extract_document
+from sources import SourceFetchError, collect_source_text, extract_document
 from web_search import WebSearchError
 
 
@@ -168,20 +169,22 @@ async def generate_deck(
     if total_bytes > MAX_UPLOAD_TOTAL_BYTES:
         raise HTTPException(413, "Combined document uploads must be 15 MB or smaller.")
     url_source_start = len(source_catalog)
-    for index, source_url in enumerate(urls, start=1):
-        source_catalog[f"S{url_source_start + index}"] = source_url
     request_id = uuid.uuid4().hex
     relevant_links: list[dict[str, str]] = []
     search_results: list[dict[str, str]] = []
+    source_warnings: list[str] = []
     research_stats: dict[str, int] = {}
     try:
-        source_text = await asyncio.to_thread(
+        source_text, readable_url_indexes, source_warnings = await asyncio.to_thread(
             collect_source_text,
             "\n\n".join(parts),
             "\n".join(urls),
             request_id,
             url_source_start,
         )
+        for index, source_url in enumerate(urls, start=1):
+            if index in readable_url_indexes:
+                source_catalog[f"S{url_source_start + index}"] = source_url
         output_path = await asyncio.to_thread(
             generate_presentation,
             request_id,
@@ -195,6 +198,15 @@ async def generate_deck(
             research_stats,
             search_results,
         )
+    except GraphRecursionError as error:
+        logger.warning("Generation request %s exceeded the agent step limit", request_id)
+        raise HTTPException(
+            502,
+            "Deck generation took too many agent steps. Try again with fewer sources or a shorter request.",
+        ) from error
+    except SourceFetchError as error:
+        logger.warning("Generation request %s could not read source URLs: %s", request_id, error)
+        raise HTTPException(502, str(error)) from error
     except WebSearchError as error:
         logger.warning("Generation request %s web research failed: %s", request_id, error)
         raise HTTPException(502, str(error)) from error
@@ -215,6 +227,7 @@ async def generate_deck(
                 "search_results": search_results,
                 "research_depth": research_depth,
                 "research_stats": research_stats,
+                "source_warnings": source_warnings,
             }
         )
     return FileResponse(

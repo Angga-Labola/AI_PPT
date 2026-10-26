@@ -16,6 +16,10 @@ from logging_config import configure_logging
 logger = configure_logging().getChild("sources")
 
 
+class SourceFetchError(RuntimeError):
+    pass
+
+
 def _validate_public_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -65,7 +69,7 @@ def collect_source_text(
     source_url: str,
     request_id: str = "",
     source_id_offset: int = 0,
-) -> str:
+) -> tuple[str, list[int], list[str]]:
     urls = [line.strip() for line in source_url.splitlines() if line.strip()]
     headers = [
         f"[S{source_id_offset + index}] Web source: {url}\n"
@@ -75,13 +79,44 @@ def collect_source_text(
     section_count = len(urls) + bool(input_text.strip())
     section_budget = available_chars // max(1, section_count)
     parts = [input_text.strip()[:section_budget]] if input_text.strip() else []
+    readable_url_indexes = []
+    source_warnings = []
     for index, (url, header) in enumerate(zip(urls, headers), start=1):
         logger.info("Request %s: reading web source %d/%d", request_id, index, len(urls))
-        parts.append(f"{header}{fetch_public_url(url)[:section_budget]}")
+        try:
+            page_text = fetch_public_url(url)
+            if not page_text.strip():
+                raise ValueError("The webpage contained no readable text.")
+        except httpx.HTTPStatusError as error:
+            detail = f"HTTP {error.response.status_code}"
+        except httpx.HTTPError as error:
+            detail = type(error).__name__
+        except ValueError as error:
+            detail = str(error)
+        else:
+            parts.append(f"{header}{page_text[:section_budget]}")
+            readable_url_indexes.append(index)
+            continue
+
+        warning = f"{url} ({detail})"
+        source_warnings.append(warning)
+        logger.warning(
+            "Request %s: could not read web source %d/%d %s: %s",
+            request_id,
+            index,
+            len(urls),
+            url,
+            detail,
+        )
     combined = "\n\n".join(parts)
     if not combined.strip():
+        if source_warnings:
+            raise SourceFetchError(
+                "No readable text was found in the provided inputs. "
+                f"Unreadable URLs: {'; '.join(source_warnings)}."
+            )
         raise ValueError("No readable text was found in the provided inputs.")
-    return combined[:MAX_SOURCE_CHARS]
+    return combined[:MAX_SOURCE_CHARS], readable_url_indexes, source_warnings
 
 
 def extract_document(filename: str, content: bytes) -> str:

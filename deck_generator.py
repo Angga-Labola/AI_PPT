@@ -386,7 +386,7 @@ def generate_presentation(
         system_prompt=SYSTEM_PROMPT,
     )
     invoke_config = {
-        "recursion_limit": 25,
+        "recursion_limit": 50,
         "callbacks": [GeminiCapacityCallback(request_id)],
     }
     result = agent.invoke(

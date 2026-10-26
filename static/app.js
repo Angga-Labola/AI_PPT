@@ -262,12 +262,16 @@ form.addEventListener("submit", async (event) => {
           : `Web search ran (${stats.searches_performed} search${stats.searches_performed === 1 ? "" : "es"}), but no pages were successfully retrieved.`
         : "");
     renderSearchResults(results, researchDepth, statusMessage);
+    const sourceWarnings = generation.source_warnings || [];
+    const completionMessage = generation.relevant_links
+      ? "Your PowerPoint was downloaded and saved in the presentations folder."
+      : "Your PowerPoint was downloaded, but the active server did not return research metadata. Restart the current project server to display relevant links.";
     renderGenerationState({
       title: generation.title || generation.filename.replace(/-[^-]+\.pptx$/, "").replaceAll("-", " "),
       status: "Complete",
-      message: generation.relevant_links
-        ? "Your PowerPoint was downloaded and saved in the presentations folder."
-        : "Your PowerPoint was downloaded, but the active server did not return research metadata. Restart the current project server to display relevant links.",
+      message: sourceWarnings.length
+        ? `${completionMessage} Skipped unreadable source URLs: ${sourceWarnings.join("; ")}.`
+        : completionMessage,
       complete: true,
     });
     await loadDecks();
