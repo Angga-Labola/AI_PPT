@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f4ed">
+  <title>Fieldnotes Slide Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Fieldnotes Slide Studio home">
+        <span class="brand-mark" aria-hidden="true"><i></i></span>
+        <span>Fieldnotes <b>Studio</b></span>
+      </a>
+      <div class="topbar-meta"><span class="signal-dot"></span><span>Slide workspace</span><span class="meta-divider"></span><span>Gemini 3.5 Flash-Lite</span></div>
+    </header>
+
+    <main class="layout">
+      <section class="composer" aria-labelledby="page-title">
+        <div class="eyebrow"><span>01</span> NEW PRESENTATION</div>
+        <h1 id="page-title">Turn your sources<br>into a <em>story.</em></h1>
+        <p class="intro">Bring the raw material. Leave with a deck worth presenting.</p>
+
+        <form id="deck-form">
+          <label class="field-label" for="source-text">Your notes <span>Optional</span></label>
+          <textarea id="source-text" name="text" rows="6" placeholder="Paste research, a brief, meeting notes, or a rough idea..."></textarea>
+
+          <div class="input-grid">
+            <div class="source-block">
+              <label class="field-label" for="source-url">Web sources <span>Optional · up to 10</span></label>
+              <div class="url-wrap"><span class="url-prefix" aria-hidden="true">↗</span><textarea id="source-url" name="url" rows="3" placeholder="One public URL per line&#10;https://example.com/article"></textarea></div>
+            </div>
+            <div class="source-block">
+              <span class="field-label">Documents <span>Optional</span></span>
+              <label class="upload-zone" for="source-files">
+                <span class="upload-icon" aria-hidden="true">＋</span>
+                <span><b>Add files</b><small>PPTX, PDF, DOCX, TXT, MD · up to 10, 10 MB each</small></span>
+                <input id="source-files" name="files" type="file" accept=".pptx,.pdf,.docx,.txt,.md" multiple hidden>
+              </label>
+            </div>
+          </div>
+          <div id="file-list" class="file-list" aria-live="polite"></div>
+
+          <div class="form-foot">
+            <span class="privacy-note"><span aria-hidden="true">◈</span> Sources go to Gemini; decks stay local</span>
+            <button id="submit-button" class="primary-button" type="submit"><span>Draft presentation</span><span class="button-arrow" aria-hidden="true">↗</span></button>
+          </div>
+        </form>
+        <div id="form-error" class="form-error" role="alert" hidden></div>
+
+        <section id="active-panel" class="active-panel" aria-live="polite" hidden>
+          <div class="active-top"><div><div class="eyebrow"><span>02</span> IN PROGRESS</div><h2 id="active-title">Preparing your deck</h2></div><span id="status-pill" class="status-pill">Queued</span></div>
+          <p id="active-progress" class="active-progress">Waiting for the worker</p>
+          <div class="progress-track"><span id="progress-bar"></span></div>
+          <div class="active-actions"><span id="active-error" class="active-error"></span><button id="cancel-button" class="quiet-button" type="button">Cancel request</button></div>
+        </section>
+      </section>
+
+      <aside class="library" aria-labelledby="library-title">
+        <div class="library-heading"><div><div class="eyebrow"><span>03</span> YOUR LIBRARY</div><h2 id="library-title">Recent decks</h2></div><span id="deck-count" class="deck-count">0</span></div>
+        <div id="deck-list" class="deck-list" aria-live="polite"></div>
+        <div id="empty-library" class="empty-library"><span class="empty-mark" aria-hidden="true">◫</span><p>Your next great deck<br>starts with a source.</p></div>
+        <div class="library-bottom"><span class="storage-mark" aria-hidden="true">●</span> Stored locally on this machine</div>
+      </aside>
+    </main>
+    <footer class="site-footer"><span>FIELDNOTES SLIDE STUDIO</span><span>BUILT FOR THE MOMENT AFTER RESEARCH</span></footer>
+  </div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
