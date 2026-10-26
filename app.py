@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -23,10 +23,13 @@ from config import (
     MAX_URL_LENGTH,
     MAX_SOURCE_CHARS,
     OUTPUT_DIR,
+    TAVILY_API_KEY,
+    WEB_RESEARCH_LIMITS,
 )
 from deck_generator import generate_presentation
 from logging_config import configure_logging
 from sources import collect_source_text, extract_document
+from web_search import WebSearchError
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -114,11 +117,21 @@ async def generate_deck(
     url: str = Form(default=""),
     audience: str = Form(default="", max_length=120),
     goal: str = Form(default="", max_length=300),
+    research_depth: str = Form(default="off"),
+    include_metadata_form: bool = Form(default=False),
+    include_metadata: bool = Query(default=False),
     files: list[UploadFile] = File(default=[]),
 ):
     text = text.strip()
     audience = audience.strip()
     goal = goal.strip()
+    if research_depth not in WEB_RESEARCH_LIMITS:
+        raise HTTPException(400, "Choose a valid web research depth.")
+    if research_depth != "off" and not TAVILY_API_KEY:
+        raise HTTPException(
+            503,
+            "Web research is not configured. Set TAVILY_API_KEY, or choose Off.",
+        )
     urls = [line.strip() for line in url.splitlines() if line.strip()]
     if not text and not urls and not files:
         raise HTTPException(400, "Add text, a document, or a URL to start.")
@@ -158,6 +171,9 @@ async def generate_deck(
     for index, source_url in enumerate(urls, start=1):
         source_catalog[f"S{url_source_start + index}"] = source_url
     request_id = uuid.uuid4().hex
+    relevant_links: list[dict[str, str]] = []
+    search_results: list[dict[str, str]] = []
+    research_stats: dict[str, int] = {}
     try:
         source_text = await asyncio.to_thread(
             collect_source_text,
@@ -174,7 +190,14 @@ async def generate_deck(
             audience,
             goal,
             source_catalog,
+            research_depth,
+            relevant_links,
+            research_stats,
+            search_results,
         )
+    except WebSearchError as error:
+        logger.warning("Generation request %s web research failed: %s", request_id, error)
+        raise HTTPException(502, str(error)) from error
     except ValueError as error:
         logger.warning("Generation request %s rejected: %s", request_id, error)
         raise HTTPException(400, str(error)) from error
@@ -182,6 +205,18 @@ async def generate_deck(
         logger.exception("Generation request %s failed", request_id)
         raise HTTPException(502, "PowerPoint generation failed. Check server logs.") from error
 
+    if include_metadata or include_metadata_form:
+        return JSONResponse(
+            {
+                "title": output_path.stem.rsplit("-", 1)[0].replace("-", " ").title(),
+                "filename": output_path.name,
+                "download_url": f"/api/decks/{output_path.name}/download",
+                "relevant_links": relevant_links,
+                "search_results": search_results,
+                "research_depth": research_depth,
+                "research_stats": research_stats,
+            }
+        )
     return FileResponse(
         output_path,
         filename=output_path.name,

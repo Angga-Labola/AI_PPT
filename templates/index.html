@@ -41,6 +41,17 @@
             </div>
           </div>
 
+          <fieldset class="research-depth">
+            <legend class="field-label">Web research depth <span>Optional · uses Tavily</span></legend>
+            <div class="research-options">
+              <label class="research-option"><input type="radio" name="research_depth" value="off" checked><span><b>Off</b><small>Provided sources only</small></span></label>
+              <label class="research-option"><input type="radio" name="research_depth" value="light"><span><b>Light</b><small>1 search · up to 2 pages</small></span></label>
+              <label class="research-option"><input type="radio" name="research_depth" value="standard"><span><b>Standard</b><small>2 searches · up to 5 pages</small></span></label>
+              <label class="research-option"><input type="radio" name="research_depth" value="deep"><span><b>Deep</b><small>3 searches · up to 8 pages</small></span></label>
+            </div>
+            <p class="research-note">More research may take longer. Only safely fetched pages can be cited.</p>
+          </fieldset>
+
           <div class="input-grid">
             <div class="source-block">
               <label class="field-label" for="source-url">Web sources <span>Optional · up to 10</span></label>
@@ -50,12 +61,12 @@
               <span class="field-label">Documents <span>Optional</span></span>
               <label class="upload-zone" for="source-files">
                 <span class="upload-icon" aria-hidden="true">＋</span>
-                <span><b>Add files</b><small>PPTX, PDF, DOCX, TXT, MD · up to 10; 4 MB total on Vercel</small></span>
+                <span><b>Add files</b><small>Select files more than once to add them · PPTX, PDF, DOCX, TXT, MD · up to 10</small></span>
                 <input id="source-files" name="files" type="file" accept=".pptx,.pdf,.docx,.txt,.md" multiple hidden>
               </label>
             </div>
           </div>
-          <div id="file-list" class="file-list" aria-live="polite"></div>
+          <div id="file-list" class="file-list" role="list" aria-label="Uploaded documents" aria-live="polite"></div>
 
           <div class="form-foot">
             <span class="privacy-note"><span aria-hidden="true">◈</span> Sources go to Gemini; decks stay local</span>
@@ -69,6 +80,10 @@
           <p id="active-progress" class="active-progress">Waiting for the worker</p>
           <div class="progress-track"><span id="progress-bar"></span></div>
           <div class="active-actions"><span id="active-error" class="active-error"></span></div>
+          <section id="relevant-links" class="relevant-links" aria-labelledby="relevant-links-title" hidden>
+            <h3 id="relevant-links-title">Web search results</h3>
+            <ul id="search-result-list"></ul>
+          </section>
         </section>
       </section>
 
@@ -81,6 +96,6 @@
     </main>
     <footer class="site-footer"><span>FIELDNOTES SLIDE STUDIO</span><span>BUILT FOR THE MOMENT AFTER RESEARCH</span></footer>
   </div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=search-result-status-1" defer></script>
 </body>
 </html>

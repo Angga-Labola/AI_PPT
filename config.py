@@ -12,6 +12,7 @@ DATA_DIR = Path(os.getenv("SLIDES_DATA_DIR", "/tmp/slides-generator" if IS_VERCE
 OUTPUT_DIR = DATA_DIR / "presentations"
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 API_KEY = os.getenv("GOOGLE_API_KEY", "")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
 MAX_SOURCE_CHARS = 30_000
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024 if IS_VERCEL else 10 * 1024 * 1024
@@ -26,3 +27,11 @@ LLM_OUTPUT_RESERVE = 9_000
 GEMINI_RPM_LIMIT = 14
 GEMINI_TPM_BUDGET = 200_000
 GEMINI_MIN_INTERVAL_SECONDS = 4.3
+
+WEB_RESEARCH_LIMITS = {
+    "off": (0, 0),
+    "light": (1, 2),
+    "standard": (2, 5),
+    "deep": (3, 8),
+}
+MAX_WEB_PAGE_CHARS = 3_000

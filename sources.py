@@ -32,7 +32,7 @@ def _validate_public_url(url: str) -> None:
             raise ValueError("Private or local network URLs are not supported.")
 
 
-def _fetch_url(url: str) -> str:
+def fetch_public_url(url: str) -> str:
     current_url = url
     headers = {"User-Agent": "SlideGenerator/1.0 (source reader)"}
     with httpx.Client(timeout=15, follow_redirects=False, headers=headers) as client:
@@ -77,7 +77,7 @@ def collect_source_text(
     parts = [input_text.strip()[:section_budget]] if input_text.strip() else []
     for index, (url, header) in enumerate(zip(urls, headers), start=1):
         logger.info("Request %s: reading web source %d/%d", request_id, index, len(urls))
-        parts.append(f"{header}{_fetch_url(url)[:section_budget]}")
+        parts.append(f"{header}{fetch_public_url(url)[:section_budget]}")
     combined = "\n\n".join(parts)
     if not combined.strip():
         raise ValueError("No readable text was found in the provided inputs.")

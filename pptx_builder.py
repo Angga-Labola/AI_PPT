@@ -12,6 +12,7 @@ PAPER = RGBColor(247, 247, 239)
 GREEN = RGBColor(143, 213, 93)
 CORAL = RGBColor(232, 119, 96)
 MUTED = RGBColor(124, 143, 131)
+WEB_EVIDENCE = RGBColor(45, 105, 171)
 
 
 def _set_background(slide, color: RGBColor) -> None:
@@ -77,10 +78,14 @@ def build_presentation(deck, path: Path, source_catalog: dict[str, str] | None =
         frame.word_wrap = True
         for bullet_index, bullet in enumerate(item.bullets):
             paragraph = frame.paragraphs[0] if bullet_index == 0 else frame.add_paragraph()
-            paragraph.text = f"{bullet_index + 1:02d}    {bullet}"
+            paragraph.text = f"{bullet_index + 1:02d}    {bullet.text}"
             paragraph.font.name = "Aptos"
             paragraph.font.size = Pt(20)
-            paragraph.font.color.rgb = INK
+            paragraph.font.color.rgb = (
+                WEB_EVIDENCE
+                if any(source_id.startswith("W") for source_id in bullet.sources)
+                else INK
+            )
             paragraph.space_after = Pt(18)
             paragraph.level = 0
         citation = slide.shapes.add_textbox(
@@ -95,7 +100,12 @@ def build_presentation(deck, path: Path, source_catalog: dict[str, str] | None =
         citation_label.font.name = "Aptos"
         citation_label.font.size = Pt(10)
         citation_label.font.color.rgb = MUTED
-        for source_index, source_id in enumerate(item.sources):
+        slide_sources = dict.fromkeys(
+            source_id
+            for bullet in item.bullets
+            for source_id in bullet.sources
+        )
+        for source_index, source_id in enumerate(slide_sources):
             if source_index:
                 separator = citation_paragraph.add_run()
                 separator.text = ", "
@@ -112,6 +122,11 @@ def build_presentation(deck, path: Path, source_catalog: dict[str, str] | None =
             source_run.font.color.rgb = MUTED
             if source_name.startswith(("http://", "https://")):
                 source_run.hyperlink.address = source_name
+        legend = citation_frame.add_paragraph()
+        legend.text = "Blue bullets are supported by web research."
+        legend.font.name = "Aptos"
+        legend.font.size = Pt(9)
+        legend.font.color.rgb = MUTED
         footer = slide.shapes.add_shape(
             MSO_SHAPE.RECTANGLE, Inches(0), Inches(7.34), Inches(13.333), Inches(0.16)
         )
