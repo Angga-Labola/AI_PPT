@@ -10,6 +10,57 @@ import app
 
 
 class BackgroundJobRouteTests(unittest.TestCase):
+    def test_expired_completed_job_remains_downloadable_from_download_index(self) -> None:
+        from types import SimpleNamespace
+
+        with (
+            patch.object(app, "IS_VERCEL", True),
+            patch.object(app.job_store, "initialize_job_store"),
+            patch.object(
+                app.job_store,
+                "get_completed_job_by_filename",
+                return_value={
+                    "id": "job-123",
+                    "filename": "deck.pptx",
+                    "blob_pathname": "decks/job-123/deck.pptx",
+                },
+            ),
+            patch.object(
+                app.blob,
+                "get_blob",
+                new_callable=AsyncMock,
+                return_value=SimpleNamespace(body=b"pptx bytes"),
+            ) as get_blob,
+            TestClient(app.app) as client,
+        ):
+            response = client.get("/api/decks/deck.pptx/download")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"pptx bytes")
+        get_blob.assert_awaited_once_with(
+            "decks/job-123/deck.pptx",
+            access="private",
+        )
+
+    def test_daily_cleanup_requires_cron_bearer_secret(self) -> None:
+        with (
+            patch.object(app, "IS_VERCEL", True),
+            patch.object(app, "CRON_SECRET", "test-cron-secret"),
+            patch.object(app.job_store, "initialize_job_store"),
+            patch.object(app.job_store, "purge_terminal_jobs", return_value=4) as purge,
+            TestClient(app.app) as client,
+        ):
+            unauthorized = client.get("/api/cron/purge-terminal-jobs")
+            response = client.get(
+                "/api/cron/purge-terminal-jobs",
+                headers={"Authorization": "Bearer test-cron-secret"},
+            )
+
+        self.assertEqual(unauthorized.status_code, 401)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"deleted_terminal_jobs": 4, "retention_days": 7})
+        purge.assert_called_once_with(7)
+
     def test_local_generation_emails_and_returns_download_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as output:
             output_path = Path(output) / "test-deck-12345678.pptx"

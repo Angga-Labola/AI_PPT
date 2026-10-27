@@ -19,10 +19,11 @@ On Vercel, the API prepares the sources, stores the job and extracted source mat
 3. Enable Vercel Queues for the project. Queues are a Vercel beta feature and are available on Hobby; the current Hobby allowance includes 1 million queue operations per month.
 4. Configure `GOOGLE_API_KEY`, and optionally `TAVILY_API_KEY`, in the Vercel project environment.
 5. Configure `MAILJET_API_KEY`, `MAILJET_API_SECRET`, `MAILJET_FROM_EMAIL` (a verified Mailjet sender), and `NOTIFICATION_EMAIL` (the fixed recipient). Optionally set `MAILJET_FROM_NAME` and `APP_BASE_URL` if Vercel's automatic production URL is not the desired email link. Generation requests are rejected before starting if required Mailjet settings are missing. Completion/final-failure emails include the count of Gemini model requests; Tavily calls are not included. Mail delivery errors are logged and do not change the job's deck result.
+6. Set a strong random `CRON_SECRET` in Vercel Production environment variables. A daily Vercel Cron run removes terminal job records at least seven days old. Completed decks remain listed and downloadable: their private Blob objects and small `deck_downloads` index records containing the filename, Blob path, title, and completion time are retained until the deck is explicitly deleted. The daily schedule can make job-record removal occur up to roughly 24 hours after the seven-day threshold.
 
 Vercel Hobby Functions have a 300-second maximum duration. Queue messages are retained for up to 7 days and the Hobby allowance currently includes 1 million queue operations per month. Blob's Hobby allowance currently includes 1 GB of storage. Queue delivery is at-least-once, so the subscriber claims jobs idempotently and retries one failed attempt. Cancellation is cooperative: it is recorded immediately and generation stops at the next model-call or research boundary; a Gemini call already in progress cannot be interrupted. Jobs that exceed the function duration may restart from the beginning and can fail after the retry limit. This is a bounded background-job setup, not an unlimited worker.
 
-The Neon row stores extracted source text only while a job is pending or running; source payload is cleared on completion, failure, or cancellation. Completed decks and their research metadata remain until the user deletes the deck. Configure usage alerts and review the current free-tier quotas before deploying.
+Neon stores extracted source text only while a job is pending or running; payload is cleared on completion, failure, or cancellation. Detailed terminal job records are removed by the daily cleanup after seven days. A smaller download-index row and the Blob file remain for completed decks until the user deletes the deck, preserving the app library and email download links. Configure usage alerts and review the current free-tier quotas before deploying.
 
 ## Code Structure
 
@@ -46,6 +47,8 @@ PPTX renderer: pptx_builder.py
     +---- local execution: app_data/presentations/
     +---- Vercel: private Vercel Blob; job metadata in Neon
 ```
+
+Vercel's daily `/api/cron/purge-terminal-jobs` endpoint deletes only terminal job rows older than seven days. Completed deck downloads and library entries are resolved from the separate minimal `deck_downloads` index, which is intentionally retained until the corresponding deck is deleted.
 
 ### Modules
 

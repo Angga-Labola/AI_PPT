@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import ipaddress
 import os
 import socket
@@ -21,6 +22,7 @@ from config import (
     API_KEY,
     BLOB_READ_WRITE_TOKEN,
     BLOB_STORE_ID,
+    CRON_SECRET,
     DATABASE_URL,
     MAILJET_API_KEY,
     MAILJET_API_SECRET,
@@ -371,6 +373,21 @@ async def get_job_status(job_id: str):
     if not job:
         raise HTTPException(404, "Generation job not found.")
     return _public_job(job)
+
+
+@app.get("/api/cron/purge-terminal-jobs")
+async def purge_terminal_jobs(request: Request):
+    if not IS_VERCEL:
+        raise HTTPException(404, "Scheduled cleanup is available only on Vercel.")
+    if not CRON_SECRET:
+        raise HTTPException(503, "CRON_SECRET is not configured.")
+    authorization = request.headers.get("authorization", "")
+    supplied_secret = authorization.removeprefix("Bearer ").strip()
+    if not hmac.compare_digest(supplied_secret, CRON_SECRET):
+        raise HTTPException(401, "Unauthorized.")
+    deleted = await asyncio.to_thread(job_store.purge_terminal_jobs, 7)
+    logger.info("Scheduled cleanup deleted %d terminal job records", deleted)
+    return {"deleted_terminal_jobs": deleted, "retention_days": 7}
 
 
 @app.post("/api/jobs/{job_id}/cancel")

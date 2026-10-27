@@ -37,6 +37,33 @@ def initialize_job_store() -> None:
             "gemini_api_calls INTEGER NOT NULL DEFAULT 0"
         )
         connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deck_downloads (
+                job_id TEXT PRIMARY KEY,
+                filename TEXT NOT NULL UNIQUE,
+                blob_pathname TEXT NOT NULL,
+                metadata JSONB NOT NULL,
+                completed_at TIMESTAMPTZ NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO deck_downloads
+                (job_id, filename, blob_pathname, metadata, completed_at)
+            SELECT id, filename, blob_pathname,
+                jsonb_build_object('title', COALESCE(metadata->>'title', filename)),
+                updated_at
+            FROM deck_jobs
+            WHERE status = 'completed'
+            ON CONFLICT (job_id) DO NOTHING
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS deck_downloads_completed_at_idx "
+            "ON deck_downloads (completed_at DESC)"
+        )
+        connection.execute(
             "CREATE INDEX IF NOT EXISTS deck_jobs_created_at_idx "
             "ON deck_jobs (created_at DESC)"
         )
@@ -75,10 +102,11 @@ def list_completed_jobs(limit: int = 50) -> list[dict[str, Any]]:
         return list(
             connection.execute(
                 """
-                SELECT id, status, created_at, updated_at, filename, blob_pathname, metadata
-                FROM deck_jobs
-                WHERE status = 'completed'
-                ORDER BY updated_at DESC
+                SELECT job_id AS id, 'completed'::text AS status,
+                    completed_at AS created_at, completed_at AS updated_at,
+                    filename, blob_pathname, metadata
+                FROM deck_downloads
+                ORDER BY completed_at DESC
                 LIMIT %s
                 """,
                 (limit,),
@@ -90,9 +118,9 @@ def get_completed_job_by_filename(filename: str) -> dict[str, Any] | None:
     with _connect() as connection:
         return connection.execute(
             """
-            SELECT id, filename, blob_pathname
-            FROM deck_jobs
-            WHERE filename = %s AND status = 'completed'
+            SELECT job_id AS id, filename, blob_pathname
+            FROM deck_downloads
+            WHERE filename = %s
             """,
             (filename,),
         ).fetchone()
@@ -175,11 +203,47 @@ def finish_job(
             SET status = 'completed', filename = %s, blob_pathname = %s,
                 metadata = %s, payload = '{}'::jsonb, updated_at = now()
             WHERE id = %s AND status = 'running'
-            RETURNING id
+            RETURNING id, updated_at
             """,
             (filename, blob_pathname, Jsonb(metadata), job_id),
         ).fetchone()
-        return row is not None
+        if row is None:
+            return False
+        connection.execute(
+            """
+            INSERT INTO deck_downloads
+                (job_id, filename, blob_pathname, metadata, completed_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (job_id) DO UPDATE SET
+                filename = EXCLUDED.filename,
+                blob_pathname = EXCLUDED.blob_pathname,
+                metadata = EXCLUDED.metadata,
+                completed_at = EXCLUDED.completed_at
+            """,
+            (
+                job_id,
+                filename,
+                blob_pathname,
+                Jsonb({"title": metadata.get("title", filename)}),
+                row["updated_at"],
+            ),
+        )
+        return True
+
+
+def purge_terminal_jobs(retention_days: int = 7) -> int:
+    if retention_days < 1:
+        raise ValueError("Terminal-job retention must be at least one day.")
+    with _connect() as connection:
+        cursor = connection.execute(
+            """
+            DELETE FROM deck_jobs
+            WHERE status IN ('completed', 'failed', 'cancelled')
+              AND updated_at < now() - (%s * interval '1 day')
+            """,
+            (retention_days,),
+        )
+        return cursor.rowcount
 
 
 def add_model_api_calls(job_id: str, count: int) -> None:
@@ -245,11 +309,18 @@ def request_job_cancellation(job_id: str) -> dict[str, Any] | None:
 
 def delete_completed_job(filename: str) -> dict[str, Any] | None:
     with _connect() as connection:
-        return connection.execute(
+        row = connection.execute(
             """
-            DELETE FROM deck_jobs
-            WHERE filename = %s AND status = 'completed'
-            RETURNING id, blob_pathname
+            DELETE FROM deck_downloads
+            WHERE filename = %s
+            RETURNING job_id AS id, blob_pathname
             """,
             (filename,),
         ).fetchone()
+        if row is None:
+            return None
+        connection.execute(
+            "DELETE FROM deck_jobs WHERE id = %s AND status = 'completed'",
+            (row["id"],),
+        )
+        return row

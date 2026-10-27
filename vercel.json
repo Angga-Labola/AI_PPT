@@ -4,5 +4,11 @@
     "app.py": {
       "maxDuration": 300
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/purge-terminal-jobs",
+      "schedule": "0 3 * * *"
+    }
+  ]
 }

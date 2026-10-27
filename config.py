@@ -28,6 +28,7 @@ MAILJET_API_SECRET = os.getenv("MAILJET_API_SECRET", "")
 MAILJET_FROM_EMAIL = os.getenv("MAILJET_FROM_EMAIL", "")
 MAILJET_FROM_NAME = os.getenv("MAILJET_FROM_NAME", "AI PowerPoint Generator")
 NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL", "")
+CRON_SECRET = os.getenv("CRON_SECRET", "")
 APP_BASE_URL = os.getenv(
     "APP_BASE_URL",
     os.getenv(
