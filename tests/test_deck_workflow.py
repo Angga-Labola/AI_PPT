@@ -51,14 +51,18 @@ def _build_candidate(deck, path: Path, source_catalog) -> None:
 
 
 class FakeModel:
-    def __init__(self, responses=None) -> None:
+    def __init__(self, responses=None, run_callbacks=False) -> None:
         self.responses = list(responses or _content_responses())
         self.prompts = []
         self.configs = []
+        self.run_callbacks = run_callbacks
 
     def invoke(self, prompt, config):
         self.prompts.append(prompt)
         self.configs.append(config)
+        if self.run_callbacks:
+            for callback in config["callbacks"]:
+                callback.on_chat_model_start({}, [[prompt]])
         return type("Response", (), {"content": self.responses.pop(0)})()
 
 
@@ -120,7 +124,10 @@ class DeckWorkflowTests(unittest.TestCase):
                 }
             ],
         }
-        model = FakeModel([json.dumps(incomplete_outline), *_content_responses()])
+        model = FakeModel(
+            [json.dumps(incomplete_outline), *_content_responses()],
+            run_callbacks=True,
+        )
         model_call_counter = [0]
         with tempfile.TemporaryDirectory() as output:
             with (
@@ -129,6 +136,7 @@ class DeckWorkflowTests(unittest.TestCase):
                 patch.object(deck_generator, "OUTPUT_DIR", Path(output)),
                 patch.object(deck_generator, "build_presentation", side_effect=_build_candidate),
                 patch.object(deck_generator, "render_presentation_previews", return_value=6),
+                patch.object(deck_generator, "reserve_gemini_capacity", return_value=True),
             ):
                 path = deck_generator.generate_presentation(
                     request_id="outline-retry-test",

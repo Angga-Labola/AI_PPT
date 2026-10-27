@@ -41,12 +41,32 @@ import job_store
 from deck_generator import generate_presentation
 from deck_queue import DeckJobMessage, deck_jobs
 from logging_config import configure_logging
+from notifications import send_deck_notification
 from sources import SourceFetchError, collect_source_text, extract_document
 from web_search import WebSearchError
 
 
 BASE_DIR = Path(__file__).resolve().parent
 logger = configure_logging().getChild("web")
+
+
+def _mailjet_is_configured() -> bool:
+    return all(
+        (MAILJET_API_KEY, MAILJET_API_SECRET, MAILJET_FROM_EMAIL, NOTIFICATION_EMAIL)
+    )
+
+
+async def _notify_local_failure(model_call_counter: list[int]) -> None:
+    if IS_VERCEL:
+        return
+    try:
+        await send_deck_notification(
+            succeeded=False,
+            title="Your presentation",
+            gemini_api_calls=model_call_counter[0],
+        )
+    except Exception:
+        logger.exception("Could not send local generation failure email")
 
 
 @asynccontextmanager
@@ -57,7 +77,8 @@ async def lifespan(_: FastAPI):
             raise RuntimeError("DATABASE_URL is required for Vercel background jobs.")
         await asyncio.to_thread(job_store.initialize_job_store)
     logger.info(
-        "Application started; PowerPoints are stored in %s",
+        "Application started in %s mode; PowerPoints are stored in %s",
+        "Vercel background" if IS_VERCEL else "local synchronous",
         "Vercel Blob" if IS_VERCEL else OUTPUT_DIR,
     )
     yield
@@ -182,13 +203,12 @@ async def generate_deck(
             503,
             "Vercel Blob is not configured. Set BLOB_STORE_ID or BLOB_READ_WRITE_TOKEN.",
         )
-    if IS_VERCEL and not all(
-        (MAILJET_API_KEY, MAILJET_API_SECRET, MAILJET_FROM_EMAIL, NOTIFICATION_EMAIL)
-    ):
+    if not _mailjet_is_configured():
         raise HTTPException(
             503,
             "Email notifications are not configured. Set the Mailjet credentials, sender, and notification recipient.",
         )
+    model_call_counter = [0]
     parts = []
     source_catalog = {}
     if text:
@@ -271,25 +291,44 @@ async def generate_deck(
             relevant_links,
             research_stats,
             search_results,
+            None,
+            model_call_counter,
         )
     except GraphRecursionError as error:
+        await _notify_local_failure(model_call_counter)
         logger.warning("Generation request %s exceeded the agent step limit", request_id)
         raise HTTPException(
             502,
             "Deck generation took too many agent steps. Try again with fewer sources or a shorter request.",
         ) from error
     except SourceFetchError as error:
+        await _notify_local_failure(model_call_counter)
         logger.warning("Generation request %s could not read source URLs: %s", request_id, error)
         raise HTTPException(502, str(error)) from error
     except WebSearchError as error:
+        await _notify_local_failure(model_call_counter)
         logger.warning("Generation request %s web research failed: %s", request_id, error)
         raise HTTPException(502, str(error)) from error
     except ValueError as error:
+        await _notify_local_failure(model_call_counter)
         logger.warning("Generation request %s rejected: %s", request_id, error)
         raise HTTPException(400, str(error)) from error
     except Exception as error:
+        await _notify_local_failure(model_call_counter)
         logger.exception("Generation request %s failed", request_id)
         raise HTTPException(502, "PowerPoint generation failed. Check server logs.") from error
+
+    if not IS_VERCEL:
+        title = output_path.stem.rsplit("-", 1)[0].replace("-", " ").title()
+        try:
+            await send_deck_notification(
+                succeeded=True,
+                title=title,
+                gemini_api_calls=model_call_counter[0],
+                filename=output_path.name,
+            )
+        except Exception:
+            logger.exception("Could not send local generation completion email")
 
     if include_metadata or include_metadata_form:
         return JSONResponse(
@@ -302,6 +341,7 @@ async def generate_deck(
                 "research_depth": research_depth,
                 "research_stats": research_stats,
                 "source_warnings": source_warnings,
+                "gemini_api_calls": model_call_counter[0],
             }
         )
     return FileResponse(

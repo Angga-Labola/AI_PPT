@@ -10,6 +10,85 @@ import app
 
 
 class BackgroundJobRouteTests(unittest.TestCase):
+    def test_local_generation_emails_and_returns_download_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as output:
+            output_path = Path(output) / "test-deck-12345678.pptx"
+
+            def generate(*args):
+                args[-1][0] = 4
+                output_path.write_bytes(b"presentation")
+                return output_path
+
+            with (
+                patch.object(app, "IS_VERCEL", False),
+                patch.object(app, "API_KEY", "configured"),
+                patch.object(app, "MAILJET_API_KEY", "mailjet-key"),
+                patch.object(app, "MAILJET_API_SECRET", "mailjet-secret"),
+                patch.object(app, "MAILJET_FROM_EMAIL", "verified@example.com"),
+                patch.object(app, "NOTIFICATION_EMAIL", "recipient@example.com"),
+                patch.object(app, "OUTPUT_DIR", Path(output)),
+                patch.object(
+                    app,
+                    "collect_source_text",
+                    return_value=("Prepared source text", set(), []),
+                ),
+                patch.object(app, "generate_presentation", side_effect=generate),
+                patch.object(app, "send_deck_notification", new_callable=AsyncMock) as notify,
+                TestClient(app.app) as client,
+            ):
+                response = client.post(
+                    "/api/generate?include_metadata=true",
+                    data={"text": "A presentation topic", "research_depth": "off"},
+                )
+                download = client.get(
+                    f"/api/decks/{output_path.name}/download"
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["filename"], output_path.name)
+        self.assertEqual(response.json()["gemini_api_calls"], 4)
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(download.content, b"presentation")
+        notify.assert_awaited_once_with(
+            succeeded=True,
+            title="Test Deck",
+            gemini_api_calls=4,
+            filename=output_path.name,
+        )
+
+    def test_local_generation_failure_sends_retry_email(self) -> None:
+        with (
+            patch.object(app, "IS_VERCEL", False),
+            patch.object(app, "API_KEY", "configured"),
+            patch.object(app, "MAILJET_API_KEY", "mailjet-key"),
+            patch.object(app, "MAILJET_API_SECRET", "mailjet-secret"),
+            patch.object(app, "MAILJET_FROM_EMAIL", "verified@example.com"),
+            patch.object(app, "NOTIFICATION_EMAIL", "recipient@example.com"),
+            patch.object(
+                app,
+                "collect_source_text",
+                return_value=("Prepared source text", set(), []),
+            ),
+            patch.object(
+                app,
+                "generate_presentation",
+                side_effect=ValueError("Invalid generated outline."),
+            ),
+            patch.object(app, "send_deck_notification", new_callable=AsyncMock) as notify,
+            TestClient(app.app) as client,
+        ):
+            response = client.post(
+                "/api/generate",
+                data={"text": "A presentation topic", "research_depth": "off"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        notify.assert_awaited_once_with(
+            succeeded=False,
+            title="Your presentation",
+            gemini_api_calls=0,
+        )
+
     def test_vercel_generation_persists_and_enqueues_without_blocking_for_gemini(self) -> None:
         with tempfile.TemporaryDirectory() as output:
             with (

@@ -8,7 +8,13 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR / ".env.local", override=False)
 
-IS_VERCEL = os.getenv("VERCEL", "").lower() in {"1", "true"}
+GENERATION_MODE = os.getenv("GENERATION_MODE", "auto").strip().lower()
+if GENERATION_MODE not in {"auto", "local"}:
+    raise ValueError("GENERATION_MODE must be 'auto' or 'local'.")
+VERCEL_ENVIRONMENT = os.getenv("VERCEL", "").lower() in {"1", "true"}
+if VERCEL_ENVIRONMENT and GENERATION_MODE == "local":
+    raise RuntimeError("GENERATION_MODE=local cannot be used in a Vercel deployment.")
+IS_VERCEL = VERCEL_ENVIRONMENT
 DATA_DIR = Path(os.getenv("SLIDES_DATA_DIR", "/tmp/slides-generator" if IS_VERCEL else BASE_DIR / "app_data")).resolve()
 OUTPUT_DIR = DATA_DIR / "presentations"
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
@@ -24,7 +30,10 @@ MAILJET_FROM_NAME = os.getenv("MAILJET_FROM_NAME", "AI PowerPoint Generator")
 NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL", "")
 APP_BASE_URL = os.getenv(
     "APP_BASE_URL",
-    os.getenv("VERCEL_PROJECT_PRODUCTION_URL", os.getenv("VERCEL_URL", "")),
+    os.getenv(
+        "VERCEL_PROJECT_PRODUCTION_URL",
+        os.getenv("VERCEL_URL", f"http://localhost:{os.getenv('PORT', '8000')}"),
+    ),
 ).rstrip("/")
 if APP_BASE_URL and "://" not in APP_BASE_URL:
     APP_BASE_URL = f"https://{APP_BASE_URL}"

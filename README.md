@@ -2,6 +2,10 @@
 
 FastAPI application that turns notes, multiple URLs, and documents into a downloadable PowerPoint with LangGraph and Gemini. On Vercel, generation runs as a durable background job using Vercel Queues, Neon Postgres for job state, and Vercel Blob for persistent PowerPoint storage.
 
+## Local Debugging
+
+Set `GENERATION_MODE=local` in `.env`, configure `GOOGLE_API_KEY`, and set the Mailjet values described below, including `NOTIFICATION_EMAIL`. Run `python app.py` from the repository folder and open `http://localhost:8000`. Local mode generates synchronously, saves the deck under `app_data/presentations/`, starts the browser download as soon as generation completes, and emails the configured recipient with the result and Gemini model-call count. Generation failures send a retry notification. Email delivery errors are logged without preventing the deck download. Leave `GENERATION_MODE=auto` on Vercel; its Vercel environment variable continues selecting background jobs.
+
 ## Vercel Deployment
 
 Deploy this repository to Vercel with Python 3.12 or newer. Set `GOOGLE_API_KEY`, `DATABASE_URL`, and optionally `TAVILY_API_KEY` in the Vercel project's environment variables.
@@ -14,7 +18,7 @@ On Vercel, the API prepares the sources, stores the job and extracted source mat
 2. Create and connect a **private** Vercel Blob store to the project (for example, `vercel blob create-store Decks --access private --yes`). Configure its `BLOB_STORE_ID` in the Vercel project's Production environment variables when using OIDC. Alternatively, configure `BLOB_READ_WRITE_TOKEN` for token-based access. Do not commit either value. Redeploy after changing environment variables.
 3. Enable Vercel Queues for the project. Queues are a Vercel beta feature and are available on Hobby; the current Hobby allowance includes 1 million queue operations per month.
 4. Configure `GOOGLE_API_KEY`, and optionally `TAVILY_API_KEY`, in the Vercel project environment.
-5. Configure `MAILJET_API_KEY`, `MAILJET_API_SECRET`, `MAILJET_FROM_EMAIL` (a verified Mailjet sender), and `NOTIFICATION_EMAIL` (the fixed recipient). Optionally set `MAILJET_FROM_NAME` and `APP_BASE_URL` if Vercel's automatic production URL is not the desired email link. New Vercel jobs are rejected before generation if required Mailjet settings are missing. Completion/final-failure emails include the count of Gemini model requests; Tavily calls are not included. Mail delivery errors are logged and do not change the job's deck result.
+5. Configure `MAILJET_API_KEY`, `MAILJET_API_SECRET`, `MAILJET_FROM_EMAIL` (a verified Mailjet sender), and `NOTIFICATION_EMAIL` (the fixed recipient). Optionally set `MAILJET_FROM_NAME` and `APP_BASE_URL` if Vercel's automatic production URL is not the desired email link. Generation requests are rejected before starting if required Mailjet settings are missing. Completion/final-failure emails include the count of Gemini model requests; Tavily calls are not included. Mail delivery errors are logged and do not change the job's deck result.
 
 Vercel Hobby Functions have a 300-second maximum duration. Queue messages are retained for up to 7 days and the Hobby allowance currently includes 1 million queue operations per month. Blob's Hobby allowance currently includes 1 GB of storage. Queue delivery is at-least-once, so the subscriber claims jobs idempotently and retries one failed attempt. Cancellation is cooperative: it is recorded immediately and generation stops at the next model-call or research boundary; a Gemini call already in progress cannot be interrupted. Jobs that exceed the function duration may restart from the beginning and can fail after the retry limit. This is a bounded background-job setup, not an unlimited worker.
 
@@ -66,7 +70,7 @@ PPTX renderer: pptx_builder.py
 4. `deck_generator.py` runs research planning, bounded Tavily research, outline generation, and per-slide content generation as separate LangGraph stages. `rate_limit.py` reserves estimated capacity before every Gemini request.
 5. Pydantic validates the outline and deck, source IDs are checked against the source catalog, content density is checked, and one correction attempt is allowed.
 6. `pptx_builder.py` creates a candidate PowerPoint; `visual_qa.py` renders temporary slide previews and verifies text fit and slide bounds before the file is finalized.
-7. On Vercel, the API responds with a job ID; the browser polls Neon-backed job status, offers cancellation, and downloads the finished deck through the app. The job continues if the browser is closed. Locally, generation remains synchronous and saves to the presentations folder.
+7. On Vercel, the API responds with a job ID; the browser polls Neon-backed job status, offers cancellation, and downloads the finished deck through the app. The job continues if the browser is closed. In local mode, generation runs synchronously, sends a Mailjet notification, and the browser downloads the PowerPoint as soon as generation completes.
 
 ## Limits And Files
 

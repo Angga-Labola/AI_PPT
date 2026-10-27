@@ -108,9 +108,11 @@ class GeminiCapacityCallback(BaseCallbackHandler):
         self,
         request_id: str,
         cancel_check: Callable[[], bool] | None = None,
+        model_call_counter: list[int] | None = None,
     ) -> None:
         self.request_id = request_id
         self.cancel_check = cancel_check
+        self.model_call_counter = model_call_counter
 
     def on_chat_model_start(self, serialized, messages, **kwargs) -> None:
         _ = serialized, kwargs
@@ -122,6 +124,8 @@ class GeminiCapacityCallback(BaseCallbackHandler):
             for message in prompt_messages
         ) + LLM_OUTPUT_RESERVE
         reserve_gemini_capacity(self.request_id, estimated_tokens)
+        if self.model_call_counter is not None:
+            self.model_call_counter[0] += 1
 
 
 class GenerationCancelled(Exception):
@@ -237,11 +241,13 @@ def _model_call(
 ):
     logger.info("Request %s: starting %s stage", request_id, stage)
     started = time.monotonic()
-    if model_call_counter is not None:
-        model_call_counter[0] += 1
     response = model.invoke(
         prompt,
-        config={"callbacks": [GeminiCapacityCallback(request_id, cancel_check)]},
+        config={
+            "callbacks": [
+                GeminiCapacityCallback(request_id, cancel_check, model_call_counter)
+            ]
+        },
     )
     logger.info(
         "Request %s: completed %s stage in %.1fs",
