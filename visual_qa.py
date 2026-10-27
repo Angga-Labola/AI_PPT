@@ -1,3 +1,5 @@
+"""Preview generated slides as images and reject text that would overflow."""
+
 import logging
 import os
 from functools import lru_cache
@@ -66,6 +68,7 @@ def _wrap_text(
     font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
     max_width: int,
 ) -> list[str]:
+    """Break text into lines that fit the available pixel width."""
     lines = []
     for paragraph in text.splitlines() or [""]:
         line = ""
@@ -91,6 +94,7 @@ def _wrap_text(
 
 
 def body_font_size(bullets: list[str]) -> int:
+    """Choose the largest configured font size that fits all slide bullets."""
     for size in BODY_FONT_SIZES:
         font = _font(round(size * 96 / 72))
         canvas = Image.new("RGB", (PREVIEW_WIDTH, PREVIEW_HEIGHT))
@@ -122,6 +126,7 @@ def _fits_text(text: str, size: int, width_points: float, height_points: float) 
 
 
 def validate_deck_text_fit(deck) -> None:
+    """Check titles before creating a PowerPoint so obvious overflow is caught."""
     if not _fits_text(deck.title, 36, 10.6 * 72, 2.2 * 72):
         raise VisualLayoutError("The presentation title does not fit the cover layout.")
     if deck.subtitle and not _fits_text(deck.subtitle, 18, 9.3 * 72, 0.8 * 72):
@@ -177,11 +182,13 @@ def _render_text_shape(
 
 
 def render_presentation_previews(presentation_path: Path, preview_dir: Path) -> int:
+    """Draw simple PNG previews and raise if shapes or text exceed slide bounds."""
     presentation = Presentation(presentation_path)
     scale_x = PREVIEW_WIDTH / presentation.slide_width
     scale_y = PREVIEW_HEIGHT / presentation.slide_height
     preview_dir.mkdir(parents=True, exist_ok=True)
 
+    # This is a lightweight layout check, not a full screenshot of PowerPoint.
     for slide_number, slide in enumerate(presentation.slides, start=1):
         try:
             background = _rgb(slide.background.fill.fore_color, (247, 247, 239))

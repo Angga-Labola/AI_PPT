@@ -1,3 +1,5 @@
+"""Store background-job state and lasting deck-download details in Neon."""
+
 from typing import Any
 
 import psycopg
@@ -8,13 +10,17 @@ from config import DATABASE_URL
 
 
 def _connect() -> psycopg.Connection[dict[str, Any]]:
+    """Open one database connection; the context manager closes it after use."""
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured.")
     return psycopg.connect(DATABASE_URL, connect_timeout=10, row_factory=dict_row)
 
 
 def initialize_job_store() -> None:
+    """Create new tables and safely add columns/indexes to existing deployments."""
     with _connect() as connection:
+        # Keep a compact lookup separate from temporary job data so old job rows
+        # can be cleaned up without breaking the library or emailed download links.
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS deck_jobs (
@@ -127,6 +133,7 @@ def get_completed_job_by_filename(filename: str) -> dict[str, Any] | None:
 
 
 def claim_job(job_id: str) -> dict[str, Any] | None:
+    """Atomically mark a queued job running so duplicate deliveries cannot race."""
     with _connect() as connection:
         connection.execute(
             """
@@ -167,6 +174,7 @@ def mark_job_cancelled(job_id: str) -> None:
 
 
 def heartbeat_or_cancel(job_id: str) -> bool:
+    """Refresh a running job's timestamp, or report that cancellation was requested."""
     with _connect() as connection:
         row = connection.execute(
             """
@@ -196,6 +204,7 @@ def finish_job(
     blob_pathname: str,
     metadata: dict[str, Any],
 ) -> bool:
+    """Mark the job complete and save its small, long-lived download lookup."""
     with _connect() as connection:
         row = connection.execute(
             """
@@ -232,6 +241,7 @@ def finish_job(
 
 
 def purge_terminal_jobs(retention_days: int = 7) -> int:
+    """Remove only old completed, failed, or cancelled job rows—not deck indexes."""
     if retention_days < 1:
         raise ValueError("Terminal-job retention must be at least one day.")
     with _connect() as connection:
@@ -308,6 +318,7 @@ def request_job_cancellation(job_id: str) -> dict[str, Any] | None:
 
 
 def delete_completed_job(filename: str) -> dict[str, Any] | None:
+    """Remove a deck's lookup and job row; the caller separately deletes its Blob."""
     with _connect() as connection:
         row = connection.execute(
             """

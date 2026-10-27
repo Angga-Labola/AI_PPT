@@ -1,3 +1,4 @@
+// Browser-side behavior for submitting presentations and showing the library.
 const form = document.querySelector("#deck-form");
 const fileInput = document.querySelector("#source-files");
 const fileList = document.querySelector("#file-list");
@@ -20,9 +21,11 @@ const deckCount = document.querySelector("#deck-count");
 let activeJobId = null;
 let activePollTimer = null;
 let downloadWhenJobCompletes = false;
+// Keep the job ID in this browser so a page reload can reconnect to Vercel work.
 const ACTIVE_JOB_STORAGE_KEY = "fieldnotes-active-job";
 
 async function api(path, options = {}) {
+  // Convert API errors into normal JavaScript errors so the UI can display them.
   const response = await fetch(path, options);
   const data = response.headers.get("content-type")?.includes("application/json")
     ? await response.json()
@@ -37,6 +40,7 @@ function showError(message) {
 }
 
 function renderSearchResults(results, researchDepth = "off", statusMessage = "") {
+  // Build DOM elements instead of inserting provider text as raw HTML.
   searchResultList.replaceChildren();
   for (const source of results) {
     const item = document.createElement("li");
@@ -84,6 +88,7 @@ function renderSearchResults(results, researchDepth = "off", statusMessage = "")
 }
 
 function syncFileInput() {
+  // Browsers protect file inputs; DataTransfer rebuilds the selected-file list.
   const transfer = new DataTransfer();
   selectedFiles.forEach((file) => transfer.items.add(file));
   fileInput.files = transfer.files;
@@ -138,6 +143,7 @@ function renderGenerationState({ title, status, message, error = "", complete = 
 }
 
 function renderDeck(deck) {
+  // Create one library row with download and delete actions for a deck.
   const row = document.createElement("article");
   row.className = "deck-row";
   const icon = document.createElement("span");
@@ -186,6 +192,7 @@ async function loadDecks() {
 }
 
 function showJob(job, shouldDownload = false) {
+  // Vercel jobs are polled; local generation instead returns the file immediately.
   activeJobId = job.job_id;
   downloadWhenJobCompletes = shouldDownload;
   const active = ["queued", "running", "cancel_requested"].includes(job.status);
@@ -248,6 +255,7 @@ async function pollJob(jobId, shouldDownload = false) {
   } catch (error) {
     activeError.textContent = error.message;
   }
+  // Poll every 2.5 seconds; the server remains the source of truth for job status.
   activePollTimer = window.setTimeout(
     () => pollJob(jobId, downloadWhenJobCompletes),
     2500,
@@ -287,6 +295,7 @@ form.addEventListener("submit", async (event) => {
     message: "Reading sources and generating slides. Keep this page open until the download starts.",
   });
   try {
+    // The same endpoint returns JSON on local generation and a queued job ID on Vercel.
     const response = await fetch("/api/generate?include_metadata=true", {
       method: "POST",
       body: formData,
@@ -322,12 +331,14 @@ form.addEventListener("submit", async (event) => {
       throw new Error(responseText || "The server returned an unexpected response.");
     }
     if (generation.job_id) {
+      // A job ID means Vercel accepted background work; wait for its terminal state.
       localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, generation.job_id);
       showJob(generation, true);
       await pollJob(generation.job_id, true);
       return;
     }
     if (generation.download_url) {
+      // On localhost, generation already finished and the server gives us a file URL.
       const link = document.createElement("a");
       link.href = generation.download_url;
       link.download = generation.filename;
@@ -391,6 +402,7 @@ cancelJobButton.addEventListener("click", async () => {
 });
 
 async function initialize() {
+  // Restore both the library and any Vercel job the browser was already tracking.
   try {
     await loadDecks();
     const storedJobId = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);

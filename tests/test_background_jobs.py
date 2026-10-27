@@ -1,3 +1,5 @@
+"""Test HTTP routes without calling paid APIs or a real Vercel database."""
+
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -10,6 +12,8 @@ import app
 
 
 class BackgroundJobRouteTests(unittest.TestCase):
+    """Keep local, queued, cancellation, and cleanup routes working."""
+
     def test_expired_completed_job_remains_downloadable_from_download_index(self) -> None:
         from types import SimpleNamespace
 

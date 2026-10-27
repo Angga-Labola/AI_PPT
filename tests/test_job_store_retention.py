@@ -1,3 +1,5 @@
+"""Test Neon SQL choices using a tiny fake connection instead of a real database."""
+
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -15,6 +17,8 @@ class FakeResult:
 
 
 class FakeConnection:
+    """Record SQL and hand back prepared results for one unit test."""
+
     def __init__(self, results=None) -> None:
         self.results = list(results or [])
         self.statements = []
@@ -31,6 +35,8 @@ class FakeConnection:
 
 
 class JobStoreRetentionTests(unittest.TestCase):
+    """Protect the seven-day cleanup and separate download-index behavior."""
+
     def test_finish_job_writes_download_index_in_same_transaction(self) -> None:
         completed_at = datetime.now(timezone.utc)
         connection = FakeConnection(

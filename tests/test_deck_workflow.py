@@ -1,3 +1,5 @@
+"""Test generation stages using a fake Gemini model instead of network calls."""
+
 import json
 import tempfile
 import unittest
@@ -8,6 +10,7 @@ import deck_generator
 
 
 def _outline_payload() -> dict[str, object]:
+    """Return a small valid outline that can be reused by workflow tests."""
     return {
         "title": "A Staged Test Deck",
         "subtitle": "A workflow regression check",
@@ -25,6 +28,7 @@ def _outline_payload() -> dict[str, object]:
 
 
 def _slide_content_payload(slide_number: int) -> dict[str, object]:
+    """Build matching content for one numbered outline slide."""
     outline = _outline_payload()
     slide = outline["slides"][slide_number - 1]
     return {
@@ -51,6 +55,8 @@ def _build_candidate(deck, path: Path, source_catalog) -> None:
 
 
 class FakeModel:
+    """Stand-in for Gemini that returns saved test responses in order."""
+
     def __init__(self, responses=None, run_callbacks=False) -> None:
         self.responses = list(responses or _content_responses())
         self.prompts = []
@@ -67,6 +73,8 @@ class FakeModel:
 
 
 class DeckWorkflowTests(unittest.TestCase):
+    """Verify valid workflow, retries, source checks, and cancellation behavior."""
+
     def test_cancellation_stops_before_the_next_model_call(self) -> None:
         callback = deck_generator.GeminiCapacityCallback("cancel-test", lambda: True)
         with (

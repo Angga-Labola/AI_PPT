@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <!-- Page title, mobile sizing, fonts, and styles live in the document head. -->
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#000000">
@@ -12,6 +13,7 @@
 </head>
 <body>
   <div class="shell">
+    <!-- Header and links to the shared apps website. -->
     <header class="topbar">
       <a class="brand" href="/" aria-label="Fieldnotes Slide Studio home">
         <span class="brand-mark" aria-hidden="true"><i></i></span>
@@ -26,6 +28,7 @@
       <div class="topbar-meta"><span class="signal-dot"></span><span>Slide workspace</span><span class="meta-divider"></span><span>Gemini 3.5 Flash-Lite</span></div>
     </header>
 
+    <!-- Main form: IDs here are looked up by static/app.js. Keep them in sync. -->
     <main class="layout">
       <section class="composer" aria-labelledby="page-title">
         <div class="eyebrow"><span>01</span> NEW PRESENTATION</div>
@@ -81,6 +84,7 @@
         </form>
         <div id="form-error" class="form-error" role="alert" hidden></div>
 
+        <!-- Status is hidden until JavaScript starts or restores a generation. -->
         <section id="active-panel" class="active-panel" aria-live="polite" hidden>
           <div class="active-top"><div><div class="eyebrow"><span>02</span> IN PROGRESS</div><h2 id="active-title">Preparing your deck</h2></div><span id="status-pill" class="status-pill">Queued</span></div>
           <p id="active-progress" class="active-progress">Waiting for the worker</p>
@@ -93,6 +97,7 @@
         </section>
       </section>
 
+      <!-- JavaScript fills this list from the /api/decks endpoint. -->
       <aside class="library" aria-labelledby="library-title">
         <div class="library-heading"><div><div class="eyebrow"><span>03</span> YOUR LIBRARY</div><h2 id="library-title">Recent decks</h2></div><span id="deck-count" class="deck-count">0</span></div>
         <div id="deck-list" class="deck-list" aria-live="polite"></div>
@@ -102,6 +107,7 @@
     </main>
     <footer class="site-footer"><span>FIELDNOTES SLIDE STUDIO</span><span>BUILT FOR THE MOMENT AFTER RESEARCH</span></footer>
   </div>
+  <!-- defer runs the app code after the page markup has been read. -->
   <script src="/static/app.js?v=background-jobs-1" defer></script>
 </body>
 </html>

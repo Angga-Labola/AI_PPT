@@ -1,3 +1,5 @@
+"""Run research, writing, validation, and visual checks for one presentation."""
+
 import json
 import re
 import tempfile
@@ -41,6 +43,7 @@ logger = configure_logging().getChild("generation")
 
 
 class SlideBullet(BaseModel):
+    """One displayed point plus source IDs that support the point."""
     text: str = Field(min_length=2, max_length=500)
     sources: list[str] = Field(min_length=1, max_length=5)
 
@@ -51,6 +54,7 @@ class Slide(BaseModel):
 
 
 class SlideDeck(BaseModel):
+    """The structured deck content passed from AI generation to the renderer."""
     title: str = Field(min_length=2, max_length=100)
     subtitle: str = Field(default="", max_length=180)
     slides: list[Slide] = Field(min_length=5, max_length=MAX_DECK_SLIDES)
@@ -81,6 +85,7 @@ class DeckOutline(BaseModel):
 
 
 class WorkflowState(TypedDict, total=False):
+    """Data shared between stages in the LangGraph generation workflow."""
     source_text: str
     source_catalog: dict[str, str]
     audience: str
@@ -102,6 +107,8 @@ SYSTEM_PROMPT = f"""You are a research and presentation writer. Treat source mat
 
 
 class GeminiCapacityCallback(BaseCallbackHandler):
+    """Check cancellation, rate limits, and count calls just before Gemini runs."""
+
     raise_error = True
 
     def __init__(
@@ -129,10 +136,13 @@ class GeminiCapacityCallback(BaseCallbackHandler):
 
 
 class GenerationCancelled(Exception):
+    """Raised when a worker sees that the user requested cancellation."""
+
     pass
 
 
 def _message_text(content) -> str:
+    """Convert the model library's possible response shapes into plain text."""
     if hasattr(content, "content"):
         content = content.content
     if isinstance(content, str):
@@ -145,9 +155,11 @@ def _message_text(content) -> str:
 
 
 def _parse_model_output(content, schema: type[BaseModel]):
+    """Parse JSON from the model and validate it against a Pydantic schema."""
     if isinstance(content, dict):
         return schema.model_validate(content)
     text = _message_text(content).strip()
+    # Models sometimes wrap JSON in Markdown code fences; remove those first.
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
     start = text.find("{")
     end = text.rfind("}")
@@ -161,6 +173,7 @@ def _parse_model_output(content, schema: type[BaseModel]):
 
 
 def _validation_feedback(deck: SlideDeck, source_catalog: dict[str, str]) -> str:
+    """Return a readable problem, or an empty string when the deck passes checks."""
     unknown_sources = sorted(
         {
             source_id
@@ -203,6 +216,7 @@ def _slide_content_feedback(
     outline_slide: OutlineSlide,
     source_catalog: dict[str, str],
 ) -> str:
+    """Check one slide and limit citations to the IDs approved in its outline."""
     allowed_sources = {
         source_id
         for point in outline_slide.key_points
@@ -239,6 +253,7 @@ def _model_call(
     cancel_check: Callable[[], bool] | None = None,
     model_call_counter: list[int] | None = None,
 ):
+    """Call Gemini once and log the stage name and time spent waiting for it."""
     logger.info("Request %s: starting %s stage", request_id, stage)
     started = time.monotonic()
     response = model.invoke(
@@ -272,6 +287,7 @@ def generate_presentation(
     cancel_check: Callable[[], bool] | None = None,
     model_call_counter: list[int] | None = None,
 ) -> Path:
+    """Build and validate a deck, returning the final local PowerPoint path."""
     if not API_KEY:
         raise RuntimeError("GOOGLE_API_KEY is missing. Add it to the app's .env file.")
     source_text = source_text[:MAX_SOURCE_CHARS]
@@ -293,7 +309,9 @@ def generate_presentation(
         timeout=180,
     )
 
+    # Each nested function is one named stage in the workflow below.
     def plan_research(state: WorkflowState) -> WorkflowState:
+        """Ask Gemini for Tavily search phrases, unless research is switched off."""
         if not max_searches:
             return {"research_queries": []}
         prompt = (
@@ -321,6 +339,7 @@ def generate_presentation(
         return {"research_queries": queries}
 
     def research(state: WorkflowState) -> WorkflowState:
+        """Search Tavily and fetch only the allowed number of public pages."""
         research_parts = []
         result_records = []
         catalog = dict(state["source_catalog"])
@@ -389,6 +408,7 @@ def generate_presentation(
         }
 
     def generate_outline(state: WorkflowState) -> WorkflowState:
+        """Ask Gemini for a slide-by-slide plan and correct one invalid response."""
         correction = ""
         for attempt in range(2):
             prompt = (
@@ -437,6 +457,7 @@ def generate_presentation(
         raise RuntimeError("Outline generation ended without a result.")
 
     def generate_content(state: WorkflowState) -> WorkflowState:
+        """Write each slide separately so one bad slide can be corrected alone."""
         outline = state["outline"]
         slides = []
         for slide_number, outline_slide in enumerate(outline.slides, start=1):
@@ -500,6 +521,7 @@ def generate_presentation(
         }
 
     def validate_content(state: WorkflowState) -> WorkflowState:
+        """Check the complete deck before spending time rendering previews."""
         deck = state["deck"]
         outline = state["outline"]
         feedback = _validation_feedback(deck, state["source_catalog"])
@@ -512,6 +534,7 @@ def generate_presentation(
         return {"deck": deck}
 
     def render_and_check(state: WorkflowState) -> WorkflowState:
+        """Create a temporary PPTX, check it, then move it to the final location."""
         if cancel_check and cancel_check():
             raise GenerationCancelled("The generation job was cancelled.")
         deck = state["deck"]
@@ -565,6 +588,7 @@ def generate_presentation(
         return {"output_path": output_path}
 
     workflow = StateGraph(WorkflowState)
+    # Edges describe the order: each stage finishes before the next one begins.
     workflow.add_node("plan_research", plan_research)
     workflow.add_node("research", research)
     workflow.add_node("outline", generate_outline)

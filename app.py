@@ -1,3 +1,5 @@
+"""HTTP routes for the browser UI, generation, jobs, and deck downloads."""
+
 import asyncio
 import hmac
 import ipaddress
@@ -53,12 +55,14 @@ logger = configure_logging().getChild("web")
 
 
 def _mailjet_is_configured() -> bool:
+    """Return whether all four values needed to send email are present."""
     return all(
         (MAILJET_API_KEY, MAILJET_API_SECRET, MAILJET_FROM_EMAIL, NOTIFICATION_EMAIL)
     )
 
 
 async def _notify_local_failure(model_call_counter: list[int]) -> None:
+    """Try to email local-mode failures without hiding the original error."""
     if IS_VERCEL:
         return
     try:
@@ -73,6 +77,7 @@ async def _notify_local_failure(model_call_counter: list[int]) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    """Prepare local folders or the Vercel database when the server starts."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     if IS_VERCEL:
         if not DATABASE_URL:
@@ -93,6 +98,7 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
+    """Record each request's duration and log server errors with a traceback."""
     started_at = time.perf_counter()
     try:
         response = await call_next(request)
@@ -117,6 +123,7 @@ async def health():
 
 
 def _validate_url(url: str) -> None:
+    """Reject malformed, credentialed, or private-network URLs before fetching."""
     if len(url) > MAX_URL_LENGTH:
         raise HTTPException(400, "Each URL must be 2,048 characters or fewer.")
     parsed = urlparse(url)
@@ -134,11 +141,13 @@ def _validate_url(url: str) -> None:
 
 @app.get("/")
 async def home(request: Request):
+    """Render the single-page browser interface."""
     return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/api/decks")
 async def list_decks():
+    """Return recent decks from Neon on Vercel or the local output folder."""
     if IS_VERCEL:
         decks = await asyncio.to_thread(job_store.list_completed_jobs)
         return {
@@ -178,6 +187,7 @@ async def generate_deck(
     include_metadata: bool = Query(default=False),
     files: list[UploadFile] = File(default=[]),
 ):
+    """Validate inputs, then queue on Vercel or generate synchronously locally."""
     text = text.strip()
     audience = audience.strip()
     goal = goal.strip()
@@ -217,6 +227,8 @@ async def generate_deck(
         source_id = f"S{len(source_catalog) + 1}"
         source_catalog[source_id] = "Pasted notes"
         parts.append(f"[{source_id}] Pasted notes:\n{text}")
+    # Read each file only up to the per-file limit plus one byte; this detects
+    # an oversized upload without loading an arbitrarily large file into memory.
     total_bytes = 0
     if len(text) > MAX_SOURCE_CHARS:
         raise HTTPException(413, f"Pasted text must be {MAX_SOURCE_CHARS:,} characters or fewer.")
@@ -252,6 +264,7 @@ async def generate_deck(
             if index in readable_url_indexes:
                 source_catalog[f"S{url_source_start + index}"] = source_url
         if IS_VERCEL:
+            # Vercel Functions should return quickly; the queue worker does the slow work.
             payload = {
                 "source_text": source_text,
                 "source_urls": urls,
@@ -281,6 +294,8 @@ async def generate_deck(
                 {"job_id": request_id, "status": "queued"},
                 status_code=202,
             )
+        # Local generation is synchronous from the user's point of view. Running
+        # it in a thread keeps the async web server responsive to other requests.
         output_path = await asyncio.to_thread(
             generate_presentation,
             request_id,
@@ -367,6 +382,7 @@ def _public_job(job: dict) -> dict:
 
 @app.get("/api/jobs/{job_id}")
 async def get_job_status(job_id: str):
+    """Read the status of a Vercel background job."""
     if not IS_VERCEL:
         raise HTTPException(404, "Background jobs are available on Vercel.")
     job = await asyncio.to_thread(job_store.get_job, job_id)
@@ -377,6 +393,7 @@ async def get_job_status(job_id: str):
 
 @app.get("/api/cron/purge-terminal-jobs")
 async def purge_terminal_jobs(request: Request):
+    """Vercel calls this daily; the bearer secret prevents public cleanup calls."""
     if not IS_VERCEL:
         raise HTTPException(404, "Scheduled cleanup is available only on Vercel.")
     if not CRON_SECRET:
@@ -392,6 +409,7 @@ async def purge_terminal_jobs(request: Request):
 
 @app.post("/api/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str):
+    """Request a cooperative stop; an active Gemini request cannot be interrupted."""
     if not IS_VERCEL:
         raise HTTPException(404, "Background jobs are available on Vercel.")
     job = await asyncio.to_thread(job_store.request_job_cancellation, job_id)
@@ -402,6 +420,7 @@ async def cancel_job(job_id: str):
 
 @app.get("/api/decks/{filename}/download")
 async def download_deck(filename: str):
+    """Download a deck through the app, whether its file is local or in Blob."""
     if Path(filename).name != filename or not filename.lower().endswith(".pptx"):
         raise HTTPException(404, "PowerPoint not found.")
     if IS_VERCEL:
@@ -426,6 +445,7 @@ async def download_deck(filename: str):
 
 @app.delete("/api/decks/{filename}")
 async def remove_deck(filename: str):
+    """Delete the deck file first, then remove its library/index record."""
     if Path(filename).name != filename or not filename.lower().endswith(".pptx"):
         raise HTTPException(404, "PowerPoint not found.")
     if IS_VERCEL:
@@ -447,6 +467,7 @@ async def remove_deck(filename: str):
 if __name__ == "__main__":
     import uvicorn
 
+    # This block runs only for `python app.py`; Vercel imports `app` directly.
     uvicorn.run(
         "app:app",
         host=os.getenv("HOST", "127.0.0.1"),

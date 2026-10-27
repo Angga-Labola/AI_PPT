@@ -1,4 +1,6 @@
 import tempfile
+"""Test generated PowerPoint layout checks using small in-memory decks."""
+
 import unittest
 from pathlib import Path
 

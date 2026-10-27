@@ -1,3 +1,5 @@
+"""Send success or failure email using Mailjet's HTTP API."""
+
 import html
 
 import httpx
@@ -21,11 +23,13 @@ async def send_deck_notification(
     gemini_api_calls: int,
     filename: str = "",
 ) -> None:
+    """Send one message to the configured recipient; raise on Mailjet errors."""
     if not all(
         (MAILJET_API_KEY, MAILJET_API_SECRET, MAILJET_FROM_EMAIL, NOTIFICATION_EMAIL)
     ):
         raise RuntimeError("Mailjet notification settings are incomplete.")
 
+    # Escape text before putting it into HTML so deck titles cannot add markup.
     safe_title = html.escape(title)
     if succeeded:
         download_url = f"{APP_BASE_URL}/api/decks/{filename}/download"

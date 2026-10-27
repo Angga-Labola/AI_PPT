@@ -1,93 +1,145 @@
 # Fieldnotes Slide Studio
 
-FastAPI application that turns notes, multiple URLs, and documents into a downloadable PowerPoint with LangGraph and Gemini. On Vercel, generation runs as a durable background job using Vercel Queues, Neon Postgres for job state, and Vercel Blob for persistent PowerPoint storage.
+This app turns your notes, documents, and web links into a PowerPoint. It uses Google's Gemini to write the slides, optionally uses Tavily to search the web, and can send completion or failure emails through Mailjet.
 
-## Local Debugging
+This guide is written for someone learning to program. The comments inside the code explain important decisions; this file explains how the pieces connect and how to investigate problems yourself.
 
-Set `GENERATION_MODE=local` in `.env`, configure `GOOGLE_API_KEY`, and set the Mailjet values described below, including `NOTIFICATION_EMAIL`. Run `python app.py` from the repository folder and open `http://localhost:8000`. Local mode generates synchronously, saves the deck under `app_data/presentations/`, starts the browser download as soon as generation completes, and emails the configured recipient with the result and Gemini model-call count. Generation failures send a retry notification. Email delivery errors are logged without preventing the deck download. Leave `GENERATION_MODE=auto` on Vercel; its Vercel environment variable continues selecting background jobs.
+## Start the app on your computer
 
-## Vercel Deployment
+1. Install Python 3.12 or newer.
+2. Copy `.env.example` to `.env` and fill in your own secret values. Never share or commit `.env`.
+3. In `.env`, set `GENERATION_MODE=local` (or leave it as `auto` when running outside Vercel).
+4. Open a terminal in this folder and run `python app.py`.
+5. Open `http://localhost:8000` in your browser.
 
-Deploy this repository to Vercel with Python 3.12 or newer. Set `GOOGLE_API_KEY`, `DATABASE_URL`, and optionally `TAVILY_API_KEY` in the Vercel project's environment variables.
+Local mode waits while a presentation is generated, saves it in `app_data/presentations/`, starts a browser download when it finishes, and sends a Mailjet email to `NOTIFICATION_EMAIL`. A failed generation sends a failure email. If Mailjet itself is unavailable, the error is logged and the generated file is still returned.
 
-On Vercel, the API prepares the sources, stores the job and extracted source material in Neon, publishes a durable queue message, and returns a job ID without waiting for Gemini generation. A Vercel Queue subscriber runs generation after the browser closes, uploads the completed deck to a private Vercel Blob store, and records the result in Neon. The browser remembers its active job across reloads; a running job can be cancelled.
+For web research, also set `TAVILY_API_KEY` and choose Light, Standard, or Deep in the form. Off uses only the material you supplied.
 
-## Vercel Setup
+## Choose local or Vercel mode
 
-1. Connect a Neon Postgres database and set `DATABASE_URL` in the Vercel project. Use Neon's pooled connection string.
-2. Create and connect a **private** Vercel Blob store to the project (for example, `vercel blob create-store Decks --access private --yes`). Configure its `BLOB_STORE_ID` in the Vercel project's Production environment variables when using OIDC. Alternatively, configure `BLOB_READ_WRITE_TOKEN` for token-based access. Do not commit either value. Redeploy after changing environment variables.
-3. Enable Vercel Queues for the project. Queues are a Vercel beta feature and are available on Hobby; the current Hobby allowance includes 1 million queue operations per month.
-4. Configure `GOOGLE_API_KEY`, and optionally `TAVILY_API_KEY`, in the Vercel project environment.
-5. Configure `MAILJET_API_KEY`, `MAILJET_API_SECRET`, `MAILJET_FROM_EMAIL` (a verified Mailjet sender), and `NOTIFICATION_EMAIL` (the fixed recipient). Optionally set `MAILJET_FROM_NAME` and `APP_BASE_URL` if Vercel's automatic production URL is not the desired email link. Generation requests are rejected before starting if required Mailjet settings are missing. Completion/final-failure emails include the count of Gemini model requests; Tavily calls are not included. Mail delivery errors are logged and do not change the job's deck result.
-6. Set a strong random `CRON_SECRET` in Vercel Production environment variables. A daily Vercel Cron run removes terminal job records at least seven days old. Completed decks remain listed and downloadable: their private Blob objects and small `deck_downloads` index records containing the filename, Blob path, title, and completion time are retained until the deck is explicitly deleted. The daily schedule can make job-record removal occur up to roughly 24 hours after the seven-day threshold.
+`GENERATION_MODE` accepts:
 
-Vercel Hobby Functions have a 300-second maximum duration. Queue messages are retained for up to 7 days and the Hobby allowance currently includes 1 million queue operations per month. Blob's Hobby allowance currently includes 1 GB of storage. Queue delivery is at-least-once, so the subscriber claims jobs idempotently and retries one failed attempt. Cancellation is cooperative: it is recorded immediately and generation stops at the next model-call or research boundary; a Gemini call already in progress cannot be interrupted. Jobs that exceed the function duration may restart from the beginning and can fail after the retry limit. This is a bounded background-job setup, not an unlimited worker.
+- `auto` (default): use Vercel's background-job path when Vercel sets its `VERCEL` environment marker; otherwise use local synchronous generation.
+- `local`: explicitly use local synchronous generation. The app refuses to start this way if it detects the Vercel environment.
 
-Neon stores extracted source text only while a job is pending or running; payload is cleared on completion, failure, or cancellation. Detailed terminal job records are removed by the daily cleanup after seven days. A smaller download-index row and the Blob file remain for completed decks until the user deletes the deck, preserving the app library and email download links. Configure usage alerts and review the current free-tier quotas before deploying.
+Changing `.env` only changes your computer. It does not update Vercel's environment settings.
 
-## Code Structure
+## How one presentation is made
 
-```text
-Browser: templates/index.html + static/app.js + static/app.css
-    | multipart request
-    v
-FastAPI routes: app.py
-    | validate and extract inputs; persist job
-    v
-Neon job record + Vercel Queue
-    |
-    v
-Queue subscriber: queue_worker.py ----> sources.py + deck_generator.py
-    | combined source text
-    v
-LangGraph + Gemini staged workflow: deck_generator.py ----> rate_limit.py
-    v
-PPTX renderer: pptx_builder.py
-    |
-    +---- local execution: app_data/presentations/
-    +---- Vercel: private Vercel Blob; job metadata in Neon
-```
+1. The browser sends the form and files to `POST /api/generate`.
+2. `app.py` checks the input, extracts text from documents, and reads any directly provided web pages.
+3. `deck_generator.py` runs the writing steps: plan optional research, search and read pages, create an outline, write each slide, validate the content, and check the rendered layout.
+4. `pptx_builder.py` writes the PowerPoint file.
+5. Locally, the request waits for the file and returns it for immediate download. On Vercel, the API saves a job in Neon, sends its ID to Vercel Queues, and returns quickly. The queue worker later generates the deck and saves it in private Vercel Blob storage.
+6. Mailjet sends a completion or final-failure email. The email reports Gemini model requests; Tavily search requests are counted separately.
 
-Vercel's daily `/api/cron/purge-terminal-jobs` endpoint deletes only terminal job rows older than seven days. Completed deck downloads and library entries are resolved from the separate minimal `deck_downloads` index, which is intentionally retained until the corresponding deck is deleted.
+## Simple glossary
 
-### Modules
+| Term | Simple meaning in this app |
+|---|---|
+| API | A way for two programs to ask each other to do something. The browser calls the app's API routes. |
+| API route / endpoint | A URL in `app.py` that performs one action, such as `/api/generate` or `/api/decks`. |
+| Environment variable | A setting read when Python starts. Secrets are stored here instead of written into code. |
+| `.env` | A private text file containing settings for your computer. `.env.example` is a safe template without real secrets. |
+| Synchronous | The caller waits for the work to finish. Local generation is synchronous, so the browser receives the finished file in the same request. |
+| Background job | Work that continues after the web request returns. Vercel uses this so the user can close the browser while generation continues. |
+| Queue | A durable inbox for job IDs. Vercel Queues passes a queued job to `queue_worker.py`. |
+| Worker | A program that takes a job from a queue and performs the slow work. |
+| Database / Neon | Stores job status and small records that tell the app where a deck is. Temporary source text is cleared when a job ends. |
+| Blob storage | File storage for completed PowerPoints. On Vercel it is separate from Neon and configured as private. |
+| Download index | The small `deck_downloads` table. It maps a deck filename to its Blob file, so downloads still work after an old job record is cleaned up. |
+| Terminal job | A job that cannot continue: completed, failed, or cancelled. Queued and running jobs are not terminal. |
+| Cron job | A scheduled request. Vercel runs the cleanup route once a day. |
+| `CRON_SECRET` | A secret Vercel sends with the scheduled cleanup request so strangers cannot trigger it. |
+| HTTP status | A number describing a request result. For example, 200 means success, 400 usually means invalid input, 404 means not found, and 500 means a server problem. |
+| JSON | A common text format used to send structured information such as a job ID and status. |
+| Pydantic model | A Python rule-set for what data should look like. It checks the AI's outline and slide content before saving them. |
+| LangGraph | A library that runs the deck-writing stages in order and passes data between them. |
+| Callback | A function the model library runs at a particular moment. Here it checks cancellation, enforces rate limits, and counts Gemini calls before a request. |
+| Rate limit | A safety cap on how often the app calls Gemini, to avoid exceeding the configured quota. |
+| Retry | Trying an operation again after it fails. The outline gets one correction attempt; Vercel queue jobs have a bounded retry. |
+| Visual QA | Short for visual quality check. The app creates temporary slide previews and checks whether text or shapes go outside their boxes. |
+| Traceback | The technical error report in the terminal or Vercel logs. Read from the last line upward for the error, then use the earlier file and line names to find its cause. |
 
-- `config.py` loads `.env` and centralizes the API keys, `DATABASE_URL`, model, data/output paths, input limits, slide limit, and rate-budget values. Vercel requests use a smaller upload cap to fit the serverless request-body limit.
-- `app.py` creates the FastAPI application, initializes storage, serves the UI/static files, exposes `/health`, and implements generation, job, and library routes. On Vercel, `POST /api/generate` saves validated job input in Neon and publishes it to Vercel Queues; job status and cancellation routes read/update the durable job record. Deck download and delete routes use its private Blob pathname.
-- `job_store.py` owns the Neon schema and atomic job-state transitions.
-- `queue_worker.py` is the Vercel Queue subscriber. It claims jobs idempotently, runs the staged generator, checks cancellation between model calls, and saves the PowerPoint to Blob.
-- `sources.py` fetches public HTTP(S) webpages and validates redirects against private/local IP addresses. It extracts text from web pages and TXT/Markdown, PDF, DOCX, and PPTX documents, labeling each source so slides can cite it. PPTX extraction reads slide text shapes; images and speaker notes are not OCR-processed.
-- `deck_generator.py` runs a bounded LangGraph workflow with separate research planning, source research, outline, per-slide content, validation, and render/visual-QA stages. It retains Gemini and Tavily, validates model output and source references, and allows one correction per slide before failing.
-- `rate_limit.py` is a thread-safe, in-memory rolling RPM/TPM reservation gate used before every Gemini model call. It requires no database. Accounting resets on process restart and is not coordinated across separate server instances.
-- `pptx_builder.py` renders validated slide content into a styled `.pptx` containing one cover slide plus the generated content slides, with per-bullet source citations, blue text for Tavily web-researched points, clickable web citations, and a fitted body font for dense slides.
-- `visual_qa.py` renders temporary PNG previews of generated slides and checks slide bounds and text-box fit before the deck is saved to its final path.
-- `logging_config.py` configures console logs. `app.py` logs request timings at DEBUG and unhandled request exceptions with tracebacks. `sources.py` and `deck_generator.py` log source/model progress and output paths.
-- `templates/index.html` provides the interface structure. `static/app.js` submits the form, restores and polls active jobs, offers cancellation, downloads completed PPTX files, and renders the deck library. `static/app.css` contains responsive visual styles.
-- `pyproject.toml` and `uv.lock` define the Python dependencies and Vercel queue-subscriber entrypoint.
+## Find the code for a feature
 
-## Request Flow
+| File | What it does |
+|---|---|
+| `config.py` | Loads `.env`, chooses local or Vercel behavior, and sets limits and paths. |
+| `app.py` | Starts FastAPI and contains the web routes: generate, list, download, delete, job status, cancel, and scheduled cleanup. |
+| `sources.py` | Safely downloads public web pages and extracts text from supported documents. |
+| `web_search.py` | Sends search requests to Tavily and cleans up the returned search results. |
+| `deck_generator.py` | Runs the staged Gemini writing and validation workflow. Start here to understand how slide content is produced. |
+| `rate_limit.py` | Waits when too many Gemini requests would happen too close together. |
+| `visual_qa.py` | Estimates text fit and creates temporary image previews to find layout overflow. |
+| `pptx_builder.py` | Turns checked title, bullets, and citations into PowerPoint shapes. |
+| `deck_queue.py` | Defines the small message Vercel Queues passes between the API and worker. |
+| `queue_worker.py` | Claims Vercel jobs, calls the generator, uploads the deck, and sends completion/failure emails. |
+| `job_store.py` | Creates and updates Neon tables for jobs and the long-lived download index. |
+| `notifications.py` | Builds and sends Mailjet email messages. |
+| `logging_config.py` | Sets up readable terminal/server log output. |
+| `templates/index.html` | Defines the page elements and IDs used by the browser code. |
+| `static/app.js` | Submits the form, polls background-job status, triggers downloads, and updates the page. |
+| `static/app.css` | Controls the page colors, layout, and mobile styling. |
+| `tests/` | Small checks that run without calling real Gemini, Tavily, Mailjet, Neon, or Blob services. |
+| `pyproject.toml` and `uv.lock` | List Python packages and deployment settings. |
+| `vercel.json` | Sets the Vercel function limit and daily cleanup schedule. |
 
-1. The browser posts notes, optional audience and presentation goal, a web-research depth, up to 10 URLs (one per line), and up to 10 files as multipart form data.
-2. FastAPI validates URL and file limits and extracts document text.
-3. `sources.py` fetches each URL and combines the text within the configured source budget.
-4. `deck_generator.py` runs research planning, bounded Tavily research, outline generation, and per-slide content generation as separate LangGraph stages. `rate_limit.py` reserves estimated capacity before every Gemini request.
-5. Pydantic validates the outline and deck, source IDs are checked against the source catalog, content density is checked, and one correction attempt is allowed.
-6. `pptx_builder.py` creates a candidate PowerPoint; `visual_qa.py` renders temporary slide previews and verifies text fit and slide bounds before the file is finalized.
-7. On Vercel, the API responds with a job ID; the browser polls Neon-backed job status, offers cancellation, and downloads the finished deck through the app. The job continues if the browser is closed. In local mode, generation runs synchronously, sends a Mailjet notification, and the browser downloads the PowerPoint as soon as generation completes.
+## Debug a problem yourself
 
-## Limits And Files
+1. **Make a small reproduction.** Use a short note and leave optional web research off unless the issue is about Tavily.
+2. **Read the exact error.** The browser message may be simplified. The terminal prints the traceback, and Vercel's Function logs show deployment errors. Find the first error message and the last application filename/line in the traceback.
+3. **Follow the request flow.** A browser/form issue starts in `static/app.js` or `templates/index.html`; a rejected request starts in `app.py`; an unreadable link starts in `sources.py`; unexpected slide content starts in `deck_generator.py`; layout issues start in `visual_qa.py` or `pptx_builder.py`; Vercel job-state issues start in `queue_worker.py` or `job_store.py`; email issues start in `notifications.py`.
+4. **Use log levels.** Set `LOG_LEVEL=DEBUG` in `.env` for more local request details, then restart `python app.py`. Do not add log statements that print API keys, email secrets, full connection strings, or private source contents.
+5. **Add a test for a fix.** Put a small test in the matching file under `tests/`. Tests use fake responses so they do not send real emails or spend API credits.
+6. **Run checks.** From the project folder run `.\.venv\Scripts\python.exe -m unittest discover -s tests`, `.\.venv\Scripts\python.exe -m compileall -q app.py config.py deck_generator.py deck_queue.py job_store.py logging_config.py notifications.py pptx_builder.py queue_worker.py rate_limit.py sources.py visual_qa.py web_search.py tests`, `node --check static\app.js`, and `git diff --check`.
+7. **Change one thing at a time.** If the error changes, read the new error rather than assuming it is the old problem.
 
-- Up to 10 public HTTP(S) URLs, one per line and 2,048 characters each. Local/private IP addresses are rejected.
-- Combined pasted notes, extracted documents, and direct URL text are limited to 100,000 characters per presentation.
-- Up to 10 files: PPTX, PDF, DOCX, TXT, or Markdown. Locally, each file is limited to 10 MB and the combined upload to 15 MB. Vercel requests are capped at 4 MB to respect its function body limit.
-- Audience and presentation-goal preferences are optional; they are limited to 120 and 300 characters.
-- Web research is optional: Off uses provided sources only; Light allows 1 search and up to 2 fetched pages; Standard allows 2 searches and up to 5 pages; Deep allows 3 searches and up to 8 pages. Search results alone are not cited; a page must be safely fetched and source-validated first.
-- Web research requires `TAVILY_API_KEY` in `.env` or the host environment. Search uses Tavily's basic search mode; the selected depth controls the per-request maximum searches and safely fetched pages. The generation result displays up to 10 search results per query, marking fetched pages cited in the presentation as relevant and showing unfetched or unreadable results as not assessed.
-- Up to 25 content slides plus one cover slide.
-- In local execution only, output directory defaults to `app_data/presentations/`; deployed decks are stored in Vercel Blob.
+Common messages:
 
-Uploaded source text is sent to Google AI Studio. In Vercel mode, extracted source text is also temporarily stored in Neon until the job reaches a terminal state. The in-memory limiter reserves at most 14 calls per rolling minute and 200,000 estimated tokens per minute, below the stated 15 RPM / 250,000 TPM quota. Output is capped at 8,000 tokens. Token accounting is approximate and does not include other users sharing the Google project.
+- `GOOGLE_API_KEY is not configured`: add the Google key to the environment where the server runs, then restart/redeploy.
+- `Web research is not configured`: add `TAVILY_API_KEY` or choose Off.
+- `Vercel Blob is not configured`: configure `BLOB_STORE_ID` or `BLOB_READ_WRITE_TOKEN` in Vercel.
+- `Cannot use private access on a public store`: connect a private Blob store; do not make decks public just to hide the error.
+- `CRON_SECRET is not configured`: scheduled cleanup needs this value in Vercel Production variables.
+- `slides List should have at least 5 items`: Gemini did not provide a valid outline. The generator asks once for a correction; if that also fails, inspect the model/log output and retry with clearer or more complete source material.
+- A `502` means the request reached the app but a later operation failed. Read the server traceback to find which operation.
 
-## Vercel Limitation
+## Local settings
 
-The Vercel deployment uses Neon, Vercel Queues, and a private Blob store for persistent background jobs. Hobby limits still apply, including the 300-second function maximum duration, queue-operation allowance, and Blob storage/transfer allowance. The app keeps synchronous generation and local-file storage for local development. Keep secrets in environment settings and do not commit `.env`.
+Common `.env` variable names:
+
+| Variable | Needed for | Meaning |
+|---|---|---|
+| `GOOGLE_API_KEY` | Every generation | Google AI Studio key for Gemini. |
+| `GENERATION_MODE` | Optional | `auto` or `local`; see the section above. |
+| `GEMINI_MODEL` | Optional | Model name; defaults to `gemini-3.5-flash-lite`. |
+| `TAVILY_API_KEY` | Optional web research | Tavily web-search key. |
+| `MAILJET_API_KEY`, `MAILJET_API_SECRET` | Email | Mailjet credentials; do not expose the secret. |
+| `MAILJET_FROM_EMAIL` | Email | A sender address verified in Mailjet. |
+| `NOTIFICATION_EMAIL` | Email | Fixed recipient of generation messages. |
+| `APP_BASE_URL` | Optional email links | Base address used to build the email download link. Local default is `http://localhost:8000`. |
+| `DATABASE_URL` | Vercel jobs | Neon connection string; not required for local synchronous mode. |
+| `BLOB_STORE_ID` or `BLOB_READ_WRITE_TOKEN` | Vercel deck storage | Tells Vercel how to access the configured Blob store. |
+| `CRON_SECRET` | Vercel cleanup | Random secret used to protect the cleanup route. |
+| `LOG_LEVEL` | Optional | `INFO` by default; set to `DEBUG` for more detail. |
+
+## Vercel deployment
+
+Deploy using Python 3.12 or newer. In Vercel Project Settings, configure `GOOGLE_API_KEY`, `DATABASE_URL`, Blob settings, Mailjet settings, and a strong `CRON_SECRET`. Configure `TAVILY_API_KEY` if web research is offered. Environment variables added or changed in Vercel require a redeployment before Functions see the new values.
+
+Enable Vercel Queues and connect a **private** Blob store. The app stores source text temporarily in Neon while work is pending or running; it clears that payload when the job ends. A daily Cron removes completed, failed, and cancelled job records after seven days. It does not delete the completed deck: the smaller `deck_downloads` lookup and the Blob file remain until the user deletes the deck in the app.
+
+Vercel's Hobby plan has limits, including a 300-second Function maximum duration. Queue delivery can happen more than once, so the worker claims jobs safely and retries a limited number of times. Cancellation is cooperative: it stops at the next check, not in the middle of a Gemini request. These are bounded background jobs, not an always-running unlimited worker.
+
+## Input and generation limits
+
+- Up to 10 public web URLs, each at most 2,048 characters. Private/local network addresses are rejected.
+- Up to 10 files: PPTX, PDF, DOCX, TXT, or Markdown. Local per-file limit is 10 MB and combined file limit is 15 MB. Vercel request upload limit is 4 MB.
+- Combined notes, extracted documents, and direct URL text: 100,000 characters maximum.
+- Audience: 120 characters. Goal: 300 characters.
+- Up to 25 content slides plus a cover slide.
+- Research depth: Off (provided material only), Light (1 search / up to 2 pages), Standard (2 / up to 5), or Deep (3 / up to 8).
+- Gemini rate gate: at most 14 calls per rolling minute and 200,000 estimated tokens per minute for this app process. The estimate is approximate; other apps sharing the Google project are not counted.
+- Source text is sent to Google AI Studio for generation. In Vercel mode it is also temporarily stored in Neon while the job runs.

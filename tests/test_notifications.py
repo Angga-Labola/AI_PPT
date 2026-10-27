@@ -1,3 +1,5 @@
+"""Test email content without sending a real message through Mailjet."""
+
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -5,6 +7,8 @@ import notifications
 
 
 class DeckNotificationTests(unittest.IsolatedAsyncioTestCase):
+    """Check the human-readable success and failure emails."""
+
     async def test_completion_email_contains_download_link_and_gemini_call_count(self) -> None:
         response = AsyncMock()
         client = AsyncMock()

@@ -1,3 +1,5 @@
+"""Turn the validated slide data into a styled PowerPoint file."""
+
 from pathlib import Path
 
 from pptx import Presentation
@@ -24,6 +26,7 @@ def _set_background(slide, color: RGBColor) -> None:
 
 
 def _add_text(slide, text: str, left, top, width, height, *, size, color, bold=False):
+    """Add a wrapped text box at inch-based coordinates."""
     shape = slide.shapes.add_textbox(left, top, width, height)
     frame = shape.text_frame
     frame.clear()
@@ -39,6 +42,7 @@ def _add_text(slide, text: str, left, top, width, height, *, size, color, bold=F
 
 
 def build_presentation(deck, path: Path, source_catalog: dict[str, str] | None = None) -> None:
+    """Build the cover and content slides, then save them to ``path``."""
     presentation = Presentation()
     presentation.slide_width = Inches(13.333)
     presentation.slide_height = Inches(7.5)
@@ -63,6 +67,7 @@ def build_presentation(deck, path: Path, source_catalog: dict[str, str] | None =
     dot.fill.fore_color.rgb = CORAL
     dot.line.fill.background()
 
+    # The cover is separate; these are the content slides counted by the generator.
     for index, item in enumerate(deck.slides, start=1):
         slide = presentation.slides.add_slide(blank)
         _set_background(slide, PAPER)
@@ -105,6 +110,7 @@ def build_presentation(deck, path: Path, source_catalog: dict[str, str] | None =
         citation_label.font.name = "Aptos"
         citation_label.font.size = Pt(10)
         citation_label.font.color.rgb = MUTED
+        # dict.fromkeys keeps each citation once while preserving its first-use order.
         slide_sources = dict.fromkeys(
             source_id
             for bullet in item.bullets

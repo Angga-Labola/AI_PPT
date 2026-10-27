@@ -1,3 +1,5 @@
+"""Keep Gemini calls below configured request and estimated-token limits."""
+
 import threading
 import time
 from collections import deque
@@ -17,6 +19,7 @@ _last_call_at = 0.0
 
 
 def reserve_gemini_capacity(request_id: str, tokens: int) -> bool:
+    """Wait for room in the rolling 60-second window, then reserve one call."""
     global _last_call_at
     if tokens > GEMINI_TPM_BUDGET:
         raise ValueError("This source is too large for the current Gemini token budget.")
@@ -25,6 +28,7 @@ def reserve_gemini_capacity(request_id: str, tokens: int) -> bool:
         now = time.monotonic()
         sleep_seconds = 0.1
         with _lock:
+            # Remove reservations older than a minute before checking this call.
             while _calls and _calls[0][0] <= now - 60:
                 _calls.popleft()
 
@@ -40,6 +44,7 @@ def reserve_gemini_capacity(request_id: str, tokens: int) -> bool:
                 logger.info("Request %s reserved %d estimated Gemini tokens", request_id, tokens)
                 return True
 
+            # Release the lock while sleeping so another request can use the gate.
             wait_for_window = max(0.1, _calls[0][0] + 60 - now) if _calls else 0.1
             sleep_seconds = min(0.5, max(interval_remaining, wait_for_window, 0.1))
         time.sleep(sleep_seconds)

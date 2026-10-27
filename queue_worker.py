@@ -1,3 +1,5 @@
+"""Process durable Vercel Queue messages and save finished decks to Blob."""
+
 import asyncio
 
 from vercel import blob
@@ -16,6 +18,7 @@ PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.
 
 
 async def _keep_job_lease(job_id: str) -> None:
+    """Refresh the job timestamp so another delivery knows the worker is alive."""
     while True:
         await asyncio.sleep(20)
         if await asyncio.to_thread(job_store.heartbeat_or_cancel, job_id):
@@ -29,13 +32,16 @@ async def _keep_job_lease(job_id: str) -> None:
     max_concurrency=1,
 )
 async def process_deck_job(message: DeckJobMessage) -> None:
+    """Claim, generate, upload, and finalize one queued job."""
     await asyncio.to_thread(job_store.initialize_job_store)
     job = await asyncio.to_thread(job_store.claim_job, message.job_id)
     if job is None:
         logger.info("Queue delivery for %s is already claimed or terminal", message.job_id)
         return
 
+    # Only the queue ID is sent through Vercel; source content stays in Neon.
     payload = job["payload"]
+    # The heartbeat runs beside generation, allowing cancel requests to be seen.
     try:
         relevant_links: list[dict[str, str]] = []
         search_results: list[dict[str, str]] = []
@@ -75,6 +81,7 @@ async def process_deck_job(message: DeckJobMessage) -> None:
             await asyncio.to_thread(job_store.mark_job_cancelled, message.job_id)
             return
         blob_pathname = f"decks/{message.job_id}/{output_path.name}"
+        # Private access means a deck can only be downloaded through our app routes.
         uploaded = await blob.put_blob(
             blob_pathname,
             output_path.read_bytes(),
@@ -119,6 +126,7 @@ async def process_deck_job(message: DeckJobMessage) -> None:
         await asyncio.to_thread(job_store.mark_job_cancelled, message.job_id)
         logger.info("Queue job %s was cancelled", message.job_id)
     except Exception as error:
+        # Retry once, then retain a final failed record and notify the configured user.
         should_retry = await asyncio.to_thread(
             job_store.record_job_error,
             message.job_id,

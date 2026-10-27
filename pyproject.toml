@@ -1,4 +1,5 @@
 [project]
+# Project metadata and third-party Python packages needed by the app.
 name = "fieldnotes-slide-studio"
 version = "0.1.0"
 requires-python = ">=3.12"
@@ -22,6 +23,7 @@ dependencies = [
 ]
 
 [tool.vercel]
+# Tell Vercel where the web app and its Queue worker start.
 entrypoint = "app:app"
 
 [[tool.vercel.subscribers]]

@@ -1,3 +1,5 @@
+"""Read app settings from environment variables and the local .env files."""
+
 import os
 from pathlib import Path
 
@@ -8,15 +10,18 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 load_dotenv(BASE_DIR / ".env.local", override=False)
 
+# "auto" uses Vercel's own environment marker to choose the deployed workflow.
 GENERATION_MODE = os.getenv("GENERATION_MODE", "auto").strip().lower()
 if GENERATION_MODE not in {"auto", "local"}:
     raise ValueError("GENERATION_MODE must be 'auto' or 'local'.")
 VERCEL_ENVIRONMENT = os.getenv("VERCEL", "").lower() in {"1", "true"}
+# Do not let a local-only setting accidentally disable persistence on the live site.
 if VERCEL_ENVIRONMENT and GENERATION_MODE == "local":
     raise RuntimeError("GENERATION_MODE=local cannot be used in a Vercel deployment.")
 IS_VERCEL = VERCEL_ENVIRONMENT
 DATA_DIR = Path(os.getenv("SLIDES_DATA_DIR", "/tmp/slides-generator" if IS_VERCEL else BASE_DIR / "app_data")).resolve()
 OUTPUT_DIR = DATA_DIR / "presentations"
+# These names are kept short because they are read in many modules.
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 API_KEY = os.getenv("GOOGLE_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
@@ -40,6 +45,7 @@ if APP_BASE_URL and "://" not in APP_BASE_URL:
     APP_BASE_URL = f"https://{APP_BASE_URL}"
 
 MAX_SOURCE_CHARS = 100_000
+# Vercel has a tighter request-size limit than a computer running locally.
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024 if IS_VERCEL else 10 * 1024 * 1024
 MAX_UPLOADS = 10
 MAX_UPLOAD_TOTAL_BYTES = 4 * 1024 * 1024 if IS_VERCEL else 15 * 1024 * 1024

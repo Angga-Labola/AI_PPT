@@ -1,3 +1,5 @@
+"""Call Tavily and turn its response into a small, predictable result format."""
+
 import httpx
 
 
@@ -9,6 +11,7 @@ class WebSearchError(RuntimeError):
 
 
 def search_web(query: str, api_key: str, result_count: int) -> list[dict[str, str]]:
+    """Search the web; raise WebSearchError with a safe message if it fails."""
     try:
         response = httpx.post(
             TAVILY_SEARCH_URL,
@@ -39,6 +42,7 @@ def search_web(query: str, api_key: str, result_count: int) -> list[dict[str, st
     if not isinstance(items, list):
         raise WebSearchError("Tavily web search returned an invalid results list.")
 
+    # Keep only fields used later; the raw provider response is not needed.
     results = []
     for item in items:
         if not isinstance(item, dict):

@@ -1,3 +1,5 @@
+"""Safely read user-provided web pages and extract text from uploaded documents."""
+
 import ipaddress
 import socket
 from io import BytesIO
@@ -21,6 +23,7 @@ class SourceFetchError(RuntimeError):
 
 
 def _validate_public_url(url: str) -> None:
+    """Reject private-network destinations to prevent access to internal services."""
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("Only public http:// and https:// URLs are supported.")
@@ -31,16 +34,19 @@ def _validate_public_url(url: str) -> None:
     except socket.gaierror as error:
         raise ValueError("The source URL could not be resolved.") from error
     for address in addresses:
+        # A public-looking hostname can still resolve to a private IP address.
         ip = ipaddress.ip_address(address[4][0].split("%", 1)[0])
         if not ip.is_global:
             raise ValueError("Private or local network URLs are not supported.")
 
 
 def fetch_public_url(url: str) -> str:
+    """Fetch a public page, rechecking every redirect before following it."""
     current_url = url
     headers = {"User-Agent": "SlideGenerator/1.0 (source reader)"}
     with httpx.Client(timeout=15, follow_redirects=False, headers=headers) as client:
         for _ in range(4):
+            # Validate again after redirects so a public page cannot send us inward.
             _validate_public_url(current_url)
             response = client.get(current_url)
             if response.status_code in {301, 302, 303, 307, 308}:
@@ -70,6 +76,7 @@ def collect_source_text(
     request_id: str = "",
     source_id_offset: int = 0,
 ) -> tuple[str, list[int], list[str]]:
+    """Fetch direct URLs and combine readable text under the shared size limit."""
     urls = [line.strip() for line in source_url.splitlines() if line.strip()]
     headers = [
         f"[S{source_id_offset + index}] Web source: {url}\n"
@@ -77,6 +84,7 @@ def collect_source_text(
     ]
     available_chars = max(0, MAX_SOURCE_CHARS - sum(len(header) for header in headers))
     section_count = len(urls) + bool(input_text.strip())
+    # Split the remaining character budget so one long source cannot crowd out all others.
     section_budget = available_chars // max(1, section_count)
     parts = [input_text.strip()[:section_budget]] if input_text.strip() else []
     readable_url_indexes = []
@@ -120,6 +128,7 @@ def collect_source_text(
 
 
 def extract_document(filename: str, content: bytes) -> str:
+    """Extract plain text from a supported upload; images are not OCR-scanned."""
     suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     if suffix in {"txt", "md"}:
         return content.decode("utf-8-sig", errors="replace")

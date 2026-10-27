@@ -1,14 +1,18 @@
+"""Set up the shared console logger used by the app's Python modules."""
+
 import logging
 import os
 import sys
 
 
 def configure_logging() -> logging.Logger:
+    """Create one reusable logger; avoid duplicate output when imported again."""
     level_name = os.getenv("LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
     logger = logging.getLogger("slides_generator")
     logger.setLevel(level)
     logger.propagate = False
+    # Python caches imported modules, but tests and reloaders can configure again.
     if not any(getattr(handler, "_slides_generator_console", False) for handler in logger.handlers):
         handler = logging.StreamHandler(sys.stderr)
         handler._slides_generator_console = True
