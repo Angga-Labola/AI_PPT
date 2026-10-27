@@ -16,6 +16,7 @@ from config import (
     LLM_OUTPUT_RESERVE,
     MAX_WEB_PAGE_CHARS,
     MAX_DECK_SLIDES,
+    MAX_SOURCE_CHARS,
     MODEL_NAME,
     OUTPUT_DIR,
     TAVILY_API_KEY,
@@ -145,7 +146,7 @@ def generate_presentation(
 ) -> Path:
     if not API_KEY:
         raise RuntimeError("GOOGLE_API_KEY is missing. Add it to the app's .env file.")
-    source_text = source_text[:30_000]
+    source_text = source_text[:MAX_SOURCE_CHARS]
     source_catalog = source_catalog or {}
     if research_depth not in WEB_RESEARCH_LIMITS:
         raise ValueError("Choose a valid web research depth.")

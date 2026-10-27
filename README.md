@@ -60,6 +60,7 @@ PPTX renderer: pptx_builder.py
 ## Limits And Files
 
 - Up to 10 public HTTP(S) URLs, one per line and 2,048 characters each. Local/private IP addresses are rejected.
+- Combined pasted notes, extracted documents, and direct URL text are limited to 100,000 characters per presentation.
 - Up to 10 files: PPTX, PDF, DOCX, TXT, or Markdown. Locally, each file is limited to 10 MB and the combined upload to 15 MB. Vercel requests are capped at 4 MB to respect its function body limit.
 - Audience and presentation-goal preferences are optional; they are limited to 120 and 300 characters.
 - Web research is optional: Off uses provided sources only; Light allows 1 search and up to 2 fetched pages; Standard allows 2 searches and up to 5 pages; Deep allows 3 searches and up to 8 pages. Search results alone are not cited; a page must be safely fetched and source-validated first.
