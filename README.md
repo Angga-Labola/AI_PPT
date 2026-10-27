@@ -11,7 +11,7 @@ On Vercel, the API prepares the sources, stores the job and extracted source mat
 ## Vercel Setup
 
 1. Connect a Neon Postgres database and set `DATABASE_URL` in the Vercel project. Use Neon's pooled connection string.
-2. Create and connect a **private** Vercel Blob store to the project (for example, `vercel blob create-store Decks --access private --yes`). Vercel supplies the runtime credentials to the deployed app.
+2. Create and connect a **private** Vercel Blob store to the project (for example, `vercel blob create-store Decks --access private --yes`). Configure its `BLOB_STORE_ID` in the Vercel project's Production environment variables when using OIDC. Alternatively, configure `BLOB_READ_WRITE_TOKEN` for token-based access. Do not commit either value. Redeploy after changing environment variables.
 3. Enable Vercel Queues for the project. Queues are a Vercel beta feature and are available on Hobby; the current Hobby allowance includes 1 million queue operations per month.
 4. Configure `GOOGLE_API_KEY`, and optionally `TAVILY_API_KEY`, in the Vercel project environment.
 

@@ -16,6 +16,8 @@ class BackgroundJobRouteTests(unittest.TestCase):
                 patch.object(app, "IS_VERCEL", True),
                 patch.object(app, "DATABASE_URL", "postgresql://test"),
                 patch.object(app, "API_KEY", "configured"),
+                patch.object(app, "BLOB_STORE_ID", "blob-store-id"),
+                patch.object(app, "BLOB_READ_WRITE_TOKEN", ""),
                 patch.object(app, "OUTPUT_DIR", Path(output)),
                 patch.object(app.job_store, "initialize_job_store"),
                 patch.object(app.job_store, "create_job") as create_job,
@@ -39,6 +41,26 @@ class BackgroundJobRouteTests(unittest.TestCase):
             create_job.assert_called_once()
             send.assert_awaited_once()
             generate.assert_not_called()
+
+    def test_vercel_generation_rejects_missing_blob_configuration(self) -> None:
+        with (
+            patch.object(app, "IS_VERCEL", True),
+            patch.object(app, "API_KEY", "configured"),
+            patch.object(app, "BLOB_STORE_ID", ""),
+            patch.object(app, "BLOB_READ_WRITE_TOKEN", ""),
+            patch.object(app, "collect_source_text") as collect_sources,
+            patch.object(app, "send", new_callable=AsyncMock) as send,
+            TestClient(app.app) as client,
+        ):
+            response = client.post(
+                "/api/generate",
+                data={"text": "A presentation topic", "research_depth": "off"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Vercel Blob is not configured", response.json()["detail"])
+        collect_sources.assert_not_called()
+        send.assert_not_awaited()
 
     def test_job_status_route_returns_durable_job_state(self) -> None:
         now = datetime.now(timezone.utc)

@@ -19,6 +19,8 @@ from vercel.queue import send
 
 from config import (
     API_KEY,
+    BLOB_READ_WRITE_TOKEN,
+    BLOB_STORE_ID,
     DATABASE_URL,
     IS_VERCEL,
     MAX_SOURCE_CHARS,
@@ -171,6 +173,11 @@ async def generate_deck(
 
     if not API_KEY:
         raise HTTPException(503, "GOOGLE_API_KEY is not configured.")
+    if IS_VERCEL and not (BLOB_STORE_ID or BLOB_READ_WRITE_TOKEN):
+        raise HTTPException(
+            503,
+            "Vercel Blob is not configured. Set BLOB_STORE_ID or BLOB_READ_WRITE_TOKEN.",
+        )
     parts = []
     source_catalog = {}
     if text:

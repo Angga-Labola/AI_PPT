@@ -15,6 +15,8 @@ MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 API_KEY = os.getenv("GOOGLE_API_KEY", "")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+BLOB_STORE_ID = os.getenv("BLOB_STORE_ID", "")
+BLOB_READ_WRITE_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "")
 
 MAX_SOURCE_CHARS = 100_000
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024 if IS_VERCEL else 10 * 1024 * 1024
