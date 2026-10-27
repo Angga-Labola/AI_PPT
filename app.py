@@ -22,6 +22,10 @@ from config import (
     BLOB_READ_WRITE_TOKEN,
     BLOB_STORE_ID,
     DATABASE_URL,
+    MAILJET_API_KEY,
+    MAILJET_API_SECRET,
+    MAILJET_FROM_EMAIL,
+    NOTIFICATION_EMAIL,
     IS_VERCEL,
     MAX_SOURCE_CHARS,
     MAX_UPLOAD_BYTES,
@@ -177,6 +181,13 @@ async def generate_deck(
         raise HTTPException(
             503,
             "Vercel Blob is not configured. Set BLOB_STORE_ID or BLOB_READ_WRITE_TOKEN.",
+        )
+    if IS_VERCEL and not all(
+        (MAILJET_API_KEY, MAILJET_API_SECRET, MAILJET_FROM_EMAIL, NOTIFICATION_EMAIL)
+    ):
+        raise HTTPException(
+            503,
+            "Email notifications are not configured. Set the Mailjet credentials, sender, and notification recipient.",
         )
     parts = []
     source_catalog = {}

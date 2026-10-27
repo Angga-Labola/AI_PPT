@@ -8,6 +8,7 @@ from config import OUTPUT_DIR
 from deck_generator import GenerationCancelled, generate_presentation
 from deck_queue import DeckJobMessage, deck_jobs
 from logging_config import configure_logging
+from notifications import send_deck_notification
 
 
 logger = configure_logging().getChild("queue_worker")
@@ -39,22 +40,31 @@ async def process_deck_job(message: DeckJobMessage) -> None:
         relevant_links: list[dict[str, str]] = []
         search_results: list[dict[str, str]] = []
         research_stats: dict[str, int] = {}
+        model_call_counter = [0]
         lease_task = asyncio.create_task(_keep_job_lease(message.job_id))
         try:
-            output_path = await asyncio.to_thread(
-                generate_presentation,
-                message.job_id,
-                payload["source_text"],
-                payload["source_urls"],
-                payload["audience"],
-                payload["goal"],
-                payload["source_catalog"],
-                payload["research_depth"],
-                relevant_links,
-                research_stats,
-                search_results,
-                lambda: job_store.heartbeat_or_cancel(message.job_id),
-            )
+            try:
+                output_path = await asyncio.to_thread(
+                    generate_presentation,
+                    message.job_id,
+                    payload["source_text"],
+                    payload["source_urls"],
+                    payload["audience"],
+                    payload["goal"],
+                    payload["source_catalog"],
+                    payload["research_depth"],
+                    relevant_links,
+                    research_stats,
+                    search_results,
+                    lambda: job_store.heartbeat_or_cancel(message.job_id),
+                    model_call_counter,
+                )
+            finally:
+                await asyncio.to_thread(
+                    job_store.add_model_api_calls,
+                    message.job_id,
+                    model_call_counter[0],
+                )
         finally:
             lease_task.cancel()
             try:
@@ -79,6 +89,10 @@ async def process_deck_job(message: DeckJobMessage) -> None:
             "research_stats": research_stats,
             "source_warnings": payload["source_warnings"],
             "research_depth": payload["research_depth"],
+            "gemini_api_calls": await asyncio.to_thread(
+                job_store.get_model_api_calls,
+                message.job_id,
+            ),
         }
         completed = await asyncio.to_thread(
             job_store.finish_job,
@@ -90,6 +104,16 @@ async def process_deck_job(message: DeckJobMessage) -> None:
         if not completed:
             await blob.delete_blob(uploaded.pathname)
             await asyncio.to_thread(job_store.mark_job_cancelled, message.job_id)
+        else:
+            try:
+                await send_deck_notification(
+                    succeeded=True,
+                    title=metadata["title"],
+                    gemini_api_calls=metadata["gemini_api_calls"],
+                    filename=output_path.name,
+                )
+            except Exception:
+                logger.exception("Could not send completion email for job %s", message.job_id)
         logger.info("Queue job %s finished", message.job_id)
     except GenerationCancelled:
         await asyncio.to_thread(job_store.mark_job_cancelled, message.job_id)
@@ -104,3 +128,18 @@ async def process_deck_job(message: DeckJobMessage) -> None:
             logger.exception("Queue job %s failed; requesting a queue retry", message.job_id)
             raise
         logger.exception("Queue job %s failed permanently", message.job_id)
+        try:
+            job = await asyncio.to_thread(job_store.get_job, message.job_id)
+            if not job or job["status"] != "failed":
+                return
+            gemini_api_calls = await asyncio.to_thread(
+                job_store.get_model_api_calls,
+                message.job_id,
+            )
+            await send_deck_notification(
+                succeeded=False,
+                title="Your presentation",
+                gemini_api_calls=gemini_api_calls,
+            )
+        except Exception:
+            logger.exception("Could not send failure email for job %s", message.job_id)

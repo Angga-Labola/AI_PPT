@@ -17,6 +17,17 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 BLOB_STORE_ID = os.getenv("BLOB_STORE_ID", "")
 BLOB_READ_WRITE_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "")
+MAILJET_API_KEY = os.getenv("MAILJET_API_KEY", "")
+MAILJET_API_SECRET = os.getenv("MAILJET_API_SECRET", "")
+MAILJET_FROM_EMAIL = os.getenv("MAILJET_FROM_EMAIL", "")
+MAILJET_FROM_NAME = os.getenv("MAILJET_FROM_NAME", "AI PowerPoint Generator")
+NOTIFICATION_EMAIL = os.getenv("NOTIFICATION_EMAIL", "")
+APP_BASE_URL = os.getenv(
+    "APP_BASE_URL",
+    os.getenv("VERCEL_PROJECT_PRODUCTION_URL", os.getenv("VERCEL_URL", "")),
+).rstrip("/")
+if APP_BASE_URL and "://" not in APP_BASE_URL:
+    APP_BASE_URL = f"https://{APP_BASE_URL}"
 
 MAX_SOURCE_CHARS = 100_000
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024 if IS_VERCEL else 10 * 1024 * 1024

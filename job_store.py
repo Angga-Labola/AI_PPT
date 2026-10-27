@@ -27,9 +27,14 @@ def initialize_job_store() -> None:
                 error TEXT,
                 filename TEXT,
                 blob_pathname TEXT,
-                metadata JSONB
+                metadata JSONB,
+                gemini_api_calls INTEGER NOT NULL DEFAULT 0
             )
             """
+        )
+        connection.execute(
+            "ALTER TABLE deck_jobs ADD COLUMN IF NOT EXISTS "
+            "gemini_api_calls INTEGER NOT NULL DEFAULT 0"
         )
         connection.execute(
             "CREATE INDEX IF NOT EXISTS deck_jobs_created_at_idx "
@@ -175,6 +180,31 @@ def finish_job(
             (filename, blob_pathname, Jsonb(metadata), job_id),
         ).fetchone()
         return row is not None
+
+
+def add_model_api_calls(job_id: str, count: int) -> None:
+    if count <= 0:
+        return
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE deck_jobs
+            SET gemini_api_calls = gemini_api_calls + %s, updated_at = now()
+            WHERE id = %s AND status = 'running'
+            """,
+            (count, job_id),
+        )
+
+
+def get_model_api_calls(job_id: str) -> int:
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT gemini_api_calls FROM deck_jobs WHERE id = %s",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"Generation job {job_id} was not found.")
+        return row["gemini_api_calls"]
 
 
 def record_job_error(job_id: str, error: str) -> bool:

@@ -121,6 +121,7 @@ class DeckWorkflowTests(unittest.TestCase):
             ],
         }
         model = FakeModel([json.dumps(incomplete_outline), *_content_responses()])
+        model_call_counter = [0]
         with tempfile.TemporaryDirectory() as output:
             with (
                 patch.object(deck_generator, "API_KEY", "configured"),
@@ -134,10 +135,12 @@ class DeckWorkflowTests(unittest.TestCase):
                     source_text="Test source material.",
                     source_urls=[],
                     source_catalog={"S1": "Test source"},
+                    model_call_counter=model_call_counter,
                 )
                 self.assertTrue(path.is_file(), f"Missing generated file {path}")
 
         self.assertEqual(len(model.prompts), 7)
+        self.assertEqual(model_call_counter[0], 7)
         self.assertIn("at least 5 distinct slides", model.prompts[1])
 
     def test_rejects_unknown_citation_sources(self) -> None:

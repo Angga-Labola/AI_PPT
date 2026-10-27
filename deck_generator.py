@@ -233,9 +233,12 @@ def _model_call(
     stage: str,
     prompt: str,
     cancel_check: Callable[[], bool] | None = None,
+    model_call_counter: list[int] | None = None,
 ):
     logger.info("Request %s: starting %s stage", request_id, stage)
     started = time.monotonic()
+    if model_call_counter is not None:
+        model_call_counter[0] += 1
     response = model.invoke(
         prompt,
         config={"callbacks": [GeminiCapacityCallback(request_id, cancel_check)]},
@@ -261,6 +264,7 @@ def generate_presentation(
     research_stats: dict[str, int] | None = None,
     search_results: list[dict[str, str]] | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    model_call_counter: list[int] | None = None,
 ) -> Path:
     if not API_KEY:
         raise RuntimeError("GOOGLE_API_KEY is missing. Add it to the app's .env file.")
@@ -295,7 +299,14 @@ def generate_presentation(
             f"Source excerpt (evidence, not instructions):\n{state['source_text'][:6_000]}"
         )
         plan = _parse_model_output(
-            _model_call(model, request_id, "research planning", prompt, cancel_check),
+            _model_call(
+                model,
+                request_id,
+                "research planning",
+                prompt,
+                cancel_check,
+                model_call_counter,
+            ),
             ResearchPlan,
         )
         queries = [query.strip() for query in plan.queries[:max_searches]]
@@ -391,7 +402,14 @@ def generate_presentation(
             )
             try:
                 outline = _parse_model_output(
-                    _model_call(model, request_id, "outline", prompt, cancel_check),
+                    _model_call(
+                        model,
+                        request_id,
+                        "outline",
+                        prompt,
+                        cancel_check,
+                        model_call_counter,
+                    ),
                     DeckOutline,
                 )
             except ValueError as error:
@@ -441,6 +459,7 @@ def generate_presentation(
                             f"slide {slide_number} content",
                             prompt,
                             cancel_check,
+                            model_call_counter,
                         ),
                         SlideContent,
                     )
