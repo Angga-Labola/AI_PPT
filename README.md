@@ -1,6 +1,6 @@
 # Fieldnotes Slide Studio
 
-FastAPI application that synchronously turns notes, multiple URLs, and documents into a downloadable PowerPoint with DeepAgents and Gemini. It does not use a database, background worker, queue, or object-storage service.
+FastAPI application that synchronously turns notes, multiple URLs, and documents into a downloadable PowerPoint with LangGraph and Gemini. It does not use a database, background worker, queue, or object-storage service.
 
 ## Run Locally
 
@@ -27,7 +27,7 @@ FastAPI routes: app.py
 Source readers: sources.py
     | combined source text
     v
-DeepAgents + Gemini: deck_generator.py ----> rate_limit.py
+LangGraph + Gemini staged workflow: deck_generator.py ----> rate_limit.py
     |
     v
 PPTX renderer: pptx_builder.py
@@ -41,9 +41,10 @@ PPTX renderer: pptx_builder.py
 - `config.py` loads `.env` and centralizes the API key, model, data/output paths, input limits, slide limit, and rate-budget values. Vercel requests use a smaller upload cap to fit the serverless request-body limit.
 - `app.py` creates the FastAPI application, initializes the presentation directory, serves the UI/static files, exposes `/health`, and implements generation/library routes. `POST /api/generate` validates inputs, extracts uploaded documents, reads every URL, accepts optional audience and presentation-goal preferences, calls generation, and returns a `FileResponse`. `GET /api/decks` scans `.pptx` files; download and delete routes operate on a filename after checking that it stays inside the output folder. The `__main__` block starts Uvicorn for `python app.py`.
 - `sources.py` fetches public HTTP(S) webpages and validates redirects against private/local IP addresses. It extracts text from web pages and TXT/Markdown, PDF, DOCX, and PPTX documents, labeling each source so slides can cite it. PPTX extraction reads slide text shapes; images and speaker notes are not OCR-processed.
-- `deck_generator.py` defines Pydantic slide/deck schemas and the system prompt, creates the DeepAgents graph with Gemini, applies the per-call quota callback, validates model output and source references, and allows one explicit rate-limited repair invocation with actionable validation feedback before failing.
+- `deck_generator.py` runs a bounded LangGraph workflow with separate research planning, source research, outline, per-slide content, validation, and render/visual-QA stages. It retains Gemini and Tavily, validates model output and source references, and allows one correction per slide before failing.
 - `rate_limit.py` is a thread-safe, in-memory rolling RPM/TPM reservation gate used before every Gemini model call. It requires no database. Accounting resets on process restart and is not coordinated across separate server instances.
-- `pptx_builder.py` renders a validated outline into a styled `.pptx` containing one cover slide plus the generated content slides, with per-bullet source citations, blue text for Tavily web-researched points, and clickable citations for web sources.
+- `pptx_builder.py` renders validated slide content into a styled `.pptx` containing one cover slide plus the generated content slides, with per-bullet source citations, blue text for Tavily web-researched points, clickable web citations, and a fitted body font for dense slides.
+- `visual_qa.py` renders temporary PNG previews of generated slides and checks slide bounds and text-box fit before the deck is saved to its final path.
 - `logging_config.py` configures console logs. `app.py` logs request timings at DEBUG and unhandled request exceptions with tracebacks. `sources.py` and `deck_generator.py` log source/model progress and output paths.
 - `templates/index.html` provides the interface structure. `static/app.js` submits the form, starts the returned PPTX download, and renders the folder-backed library. `static/app.css` contains responsive visual styles.
 - `pyproject.toml` and `uv.lock` define the Python dependencies. `setup.bat`, `run_app.bat`, and `.vscode/launch.json` support local setup, launch, and debugging.
@@ -53,9 +54,10 @@ PPTX renderer: pptx_builder.py
 1. The browser posts notes, optional audience and presentation goal, a web-research depth, up to 10 URLs (one per line), and up to 10 files as multipart form data.
 2. FastAPI validates URL and file limits and extracts document text.
 3. `sources.py` fetches each URL and combines the text within the configured source budget.
-4. `deck_generator.py` calls DeepAgents/Gemini. Optional web research uses Tavily Search, then fetches results through the same public-URL checks as user-provided links. Search and page limits are fixed per depth and enforced server-side. `rate_limit.py` reserves estimated capacity before each model request.
-5. Pydantic validates a 5-25 slide outline and the tool checks that each slide cites known source IDs; `pptx_builder.py` creates the output file with citations.
-6. FastAPI returns the PowerPoint to API clients by default. The browser requests generation metadata, automatically downloads the deck, and displays successfully fetched web sources under “Relevant links”; the saved copy remains in the presentations folder.
+4. `deck_generator.py` runs research planning, bounded Tavily research, outline generation, and per-slide content generation as separate LangGraph stages. `rate_limit.py` reserves estimated capacity before every Gemini request.
+5. Pydantic validates the outline and deck, source IDs are checked against the source catalog, content density is checked, and one correction attempt is allowed.
+6. `pptx_builder.py` creates a candidate PowerPoint; `visual_qa.py` renders temporary slide previews and verifies text fit and slide bounds before the file is finalized.
+7. FastAPI returns the PowerPoint to API clients by default. The browser requests generation metadata, automatically downloads the deck, and displays successfully fetched web sources under “Relevant links”; the saved copy remains in the presentations folder.
 
 ## Limits And Files
 

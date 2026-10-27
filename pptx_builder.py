@@ -6,6 +6,8 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR
 from pptx.util import Inches, Pt
 
+from visual_qa import body_font_size
+
 
 INK = RGBColor(25, 43, 37)
 PAPER = RGBColor(247, 247, 239)
@@ -76,11 +78,14 @@ def build_presentation(deck, path: Path, source_catalog: dict[str, str] | None =
         frame = body.text_frame
         frame.clear()
         frame.word_wrap = True
+        font_size = body_font_size(
+            [f"{index:02d}    {bullet.text}" for index, bullet in enumerate(item.bullets, start=1)]
+        )
         for bullet_index, bullet in enumerate(item.bullets):
             paragraph = frame.paragraphs[0] if bullet_index == 0 else frame.add_paragraph()
             paragraph.text = f"{bullet_index + 1:02d}    {bullet.text}"
             paragraph.font.name = "Aptos"
-            paragraph.font.size = Pt(20)
+            paragraph.font.size = Pt(font_size)
             paragraph.font.color.rgb = (
                 WEB_EVIDENCE
                 if any(source_id.startswith("W") for source_id in bullet.sources)
