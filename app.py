@@ -5,29 +5,35 @@ import socket
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langgraph.errors import GraphRecursionError
+from vercel import blob
+from vercel.queue import send
 
 from config import (
     API_KEY,
+    DATABASE_URL,
+    IS_VERCEL,
+    MAX_SOURCE_CHARS,
     MAX_UPLOAD_BYTES,
     MAX_UPLOADS,
     MAX_UPLOAD_TOTAL_BYTES,
     MAX_URLS,
     MAX_URL_LENGTH,
-    MAX_SOURCE_CHARS,
     OUTPUT_DIR,
     TAVILY_API_KEY,
     WEB_RESEARCH_LIMITS,
 )
+import job_store
 from deck_generator import generate_presentation
+from deck_queue import DeckJobMessage, deck_jobs
 from logging_config import configure_logging
 from sources import SourceFetchError, collect_source_text, extract_document
 from web_search import WebSearchError
@@ -40,7 +46,14 @@ logger = configure_logging().getChild("web")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info("Application started; PowerPoints are stored in %s", OUTPUT_DIR)
+    if IS_VERCEL:
+        if not DATABASE_URL:
+            raise RuntimeError("DATABASE_URL is required for Vercel background jobs.")
+        await asyncio.to_thread(job_store.initialize_job_store)
+    logger.info(
+        "Application started; PowerPoints are stored in %s",
+        "Vercel Blob" if IS_VERCEL else OUTPUT_DIR,
+    )
     yield
 
 
@@ -97,6 +110,19 @@ async def home(request: Request):
 
 @app.get("/api/decks")
 async def list_decks():
+    if IS_VERCEL:
+        decks = await asyncio.to_thread(job_store.list_completed_jobs)
+        return {
+            "decks": [
+                {
+                    "id": deck["id"],
+                    "title": (deck["metadata"] or {}).get("title", deck["filename"]),
+                    "filename": deck["filename"],
+                    "updated_at": deck["updated_at"].isoformat(),
+                }
+                for deck in decks
+            ]
+        }
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     decks = sorted(OUTPUT_DIR.glob("*.pptx"), key=lambda path: path.stat().st_mtime, reverse=True)
     return {
@@ -185,6 +211,36 @@ async def generate_deck(
         for index, source_url in enumerate(urls, start=1):
             if index in readable_url_indexes:
                 source_catalog[f"S{url_source_start + index}"] = source_url
+        if IS_VERCEL:
+            payload = {
+                "source_text": source_text,
+                "source_urls": urls,
+                "audience": audience,
+                "goal": goal,
+                "source_catalog": source_catalog,
+                "research_depth": research_depth,
+                "source_warnings": source_warnings,
+            }
+            await asyncio.to_thread(job_store.create_job, request_id, payload)
+            try:
+                await send(
+                    deck_jobs,
+                    DeckJobMessage(job_id=request_id),
+                    idempotency_key=f"deck-job-{request_id}",
+                    retention=timedelta(days=7),
+                )
+            except Exception as error:
+                await asyncio.to_thread(
+                    job_store.fail_queued_job,
+                    request_id,
+                    f"Queue publish failed: {type(error).__name__}",
+                )
+                logger.exception("Could not enqueue generation job %s", request_id)
+                raise HTTPException(503, "The generation queue is unavailable. Please retry.") from error
+            return JSONResponse(
+                {"job_id": request_id, "status": "queued"},
+                status_code=202,
+            )
         output_path = await asyncio.to_thread(
             generate_presentation,
             request_id,
@@ -237,10 +293,52 @@ async def generate_deck(
     )
 
 
+def _public_job(job: dict) -> dict:
+    return {
+        "job_id": job["id"],
+        "status": job["status"],
+        "created_at": job["created_at"].isoformat(),
+        "updated_at": job["updated_at"].isoformat(),
+        "error": job["error"],
+        "filename": job["filename"],
+        "metadata": job["metadata"],
+    }
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job_status(job_id: str):
+    if not IS_VERCEL:
+        raise HTTPException(404, "Background jobs are available on Vercel.")
+    job = await asyncio.to_thread(job_store.get_job, job_id)
+    if not job:
+        raise HTTPException(404, "Generation job not found.")
+    return _public_job(job)
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    if not IS_VERCEL:
+        raise HTTPException(404, "Background jobs are available on Vercel.")
+    job = await asyncio.to_thread(job_store.request_job_cancellation, job_id)
+    if not job:
+        raise HTTPException(404, "Generation job not found.")
+    return {"job_id": job["id"], "status": job["status"]}
+
+
 @app.get("/api/decks/{filename}/download")
 async def download_deck(filename: str):
     if Path(filename).name != filename or not filename.lower().endswith(".pptx"):
         raise HTTPException(404, "PowerPoint not found.")
+    if IS_VERCEL:
+        deck = await asyncio.to_thread(job_store.get_completed_job_by_filename, filename)
+        if not deck:
+            raise HTTPException(404, "PowerPoint not found.")
+        result = await blob.get_blob(deck["blob_pathname"], access="private")
+        return Response(
+            content=result.body,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
     output_path = (OUTPUT_DIR / filename).resolve()
     if output_path.parent != OUTPUT_DIR.resolve() or not output_path.is_file():
         raise HTTPException(404, "PowerPoint not found.")
@@ -255,6 +353,14 @@ async def download_deck(filename: str):
 async def remove_deck(filename: str):
     if Path(filename).name != filename or not filename.lower().endswith(".pptx"):
         raise HTTPException(404, "PowerPoint not found.")
+    if IS_VERCEL:
+        deck = await asyncio.to_thread(job_store.get_completed_job_by_filename, filename)
+        if not deck:
+            raise HTTPException(404, "PowerPoint not found.")
+        await blob.delete_blob(deck["blob_pathname"])
+        await asyncio.to_thread(job_store.delete_completed_job, filename)
+        logger.info("Deleted presentation %s from Blob", filename)
+        return {"deleted": True}
     output_path = (OUTPUT_DIR / filename).resolve()
     if output_path.parent != OUTPUT_DIR.resolve() or not output_path.is_file():
         raise HTTPException(404, "PowerPoint not found.")

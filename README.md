@@ -1,19 +1,23 @@
 # Fieldnotes Slide Studio
 
-FastAPI application that synchronously turns notes, multiple URLs, and documents into a downloadable PowerPoint with LangGraph and Gemini. It does not use a database, background worker, queue, or object-storage service.
+FastAPI application that turns notes, multiple URLs, and documents into a downloadable PowerPoint with LangGraph and Gemini. On Vercel, generation runs as a durable background job using Vercel Queues, Neon Postgres for job state, and Vercel Blob for persistent PowerPoint storage.
 
-## Run Locally
+## Vercel Deployment
 
-Install Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/), then install dependencies and set `GOOGLE_API_KEY` in `.env` (copy `.env.example` as a starting point):
+Deploy this repository to Vercel with Python 3.12 or newer. Set `GOOGLE_API_KEY`, `DATABASE_URL`, and optionally `TAVILY_API_KEY` in the Vercel project's environment variables.
 
-```sh
-uv sync --locked
-uv run --locked python app.py
-```
+On Vercel, the API prepares the sources, stores the job and extracted source material in Neon, publishes a durable queue message, and returns a job ID without waiting for Gemini generation. A Vercel Queue subscriber runs generation after the browser closes, uploads the completed deck to a private Vercel Blob store, and records the result in Neon. The browser remembers its active job across reloads; a running job can be cancelled.
 
-Open `http://127.0.0.1:8000`. In VS Code, use **FastAPI: app.py** under Run and Debug. Set `LOG_LEVEL=DEBUG` to include successful HTTP timing details.
+## Vercel Setup
 
-Each request stays open while sources are read, Gemini creates the outline, and the PPTX is written. The API returns the generated file in that same response and saves a copy under `app_data/presentations/`. The browser downloads the response and refreshes the library by scanning the folder. Existing files can be downloaded again or deleted from the library.
+1. Connect a Neon Postgres database and set `DATABASE_URL` in the Vercel project. Use Neon's pooled connection string.
+2. Create and connect a **private** Vercel Blob store to the project (for example, `vercel blob create-store Decks --access private --yes`). Vercel supplies the runtime credentials to the deployed app.
+3. Enable Vercel Queues for the project. Queues are a Vercel beta feature and are available on Hobby; the current Hobby allowance includes 1 million queue operations per month.
+4. Configure `GOOGLE_API_KEY`, and optionally `TAVILY_API_KEY`, in the Vercel project environment.
+
+Vercel Hobby Functions have a 300-second maximum duration. Queue messages are retained for up to 7 days and the Hobby allowance currently includes 1 million queue operations per month. Blob's Hobby allowance currently includes 1 GB of storage. Queue delivery is at-least-once, so the subscriber claims jobs idempotently and retries one failed attempt. Cancellation is cooperative: it is recorded immediately and generation stops at the next model-call or research boundary; a Gemini call already in progress cannot be interrupted. Jobs that exceed the function duration may restart from the beginning and can fail after the retry limit. This is a bounded background-job setup, not an unlimited worker.
+
+The Neon row stores extracted source text only while a job is pending or running; source payload is cleared on completion, failure, or cancellation. Completed decks and their research metadata remain until the user deletes the deck. Configure usage alerts and review the current free-tier quotas before deploying.
 
 ## Code Structure
 
@@ -22,32 +26,36 @@ Browser: templates/index.html + static/app.js + static/app.css
     | multipart request
     v
 FastAPI routes: app.py
-    | validate and extract inputs
+    | validate and extract inputs; persist job
     v
-Source readers: sources.py
+Neon job record + Vercel Queue
+    |
+    v
+Queue subscriber: queue_worker.py ----> sources.py + deck_generator.py
     | combined source text
     v
 LangGraph + Gemini staged workflow: deck_generator.py ----> rate_limit.py
-    |
     v
 PPTX renderer: pptx_builder.py
     |
-    +---- save file in app_data/presentations/
-    +---- return file directly to browser
+    +---- local execution: app_data/presentations/
+    +---- Vercel: private Vercel Blob; job metadata in Neon
 ```
 
 ### Modules
 
-- `config.py` loads `.env` and centralizes the API key, model, data/output paths, input limits, slide limit, and rate-budget values. Vercel requests use a smaller upload cap to fit the serverless request-body limit.
-- `app.py` creates the FastAPI application, initializes the presentation directory, serves the UI/static files, exposes `/health`, and implements generation/library routes. `POST /api/generate` validates inputs, extracts uploaded documents, reads every URL, accepts optional audience and presentation-goal preferences, calls generation, and returns a `FileResponse`. `GET /api/decks` scans `.pptx` files; download and delete routes operate on a filename after checking that it stays inside the output folder. The `__main__` block starts Uvicorn for `python app.py`.
+- `config.py` loads `.env` and centralizes the API keys, `DATABASE_URL`, model, data/output paths, input limits, slide limit, and rate-budget values. Vercel requests use a smaller upload cap to fit the serverless request-body limit.
+- `app.py` creates the FastAPI application, initializes storage, serves the UI/static files, exposes `/health`, and implements generation, job, and library routes. On Vercel, `POST /api/generate` saves validated job input in Neon and publishes it to Vercel Queues; job status and cancellation routes read/update the durable job record. Deck download and delete routes use its private Blob pathname.
+- `job_store.py` owns the Neon schema and atomic job-state transitions.
+- `queue_worker.py` is the Vercel Queue subscriber. It claims jobs idempotently, runs the staged generator, checks cancellation between model calls, and saves the PowerPoint to Blob.
 - `sources.py` fetches public HTTP(S) webpages and validates redirects against private/local IP addresses. It extracts text from web pages and TXT/Markdown, PDF, DOCX, and PPTX documents, labeling each source so slides can cite it. PPTX extraction reads slide text shapes; images and speaker notes are not OCR-processed.
 - `deck_generator.py` runs a bounded LangGraph workflow with separate research planning, source research, outline, per-slide content, validation, and render/visual-QA stages. It retains Gemini and Tavily, validates model output and source references, and allows one correction per slide before failing.
 - `rate_limit.py` is a thread-safe, in-memory rolling RPM/TPM reservation gate used before every Gemini model call. It requires no database. Accounting resets on process restart and is not coordinated across separate server instances.
 - `pptx_builder.py` renders validated slide content into a styled `.pptx` containing one cover slide plus the generated content slides, with per-bullet source citations, blue text for Tavily web-researched points, clickable web citations, and a fitted body font for dense slides.
 - `visual_qa.py` renders temporary PNG previews of generated slides and checks slide bounds and text-box fit before the deck is saved to its final path.
 - `logging_config.py` configures console logs. `app.py` logs request timings at DEBUG and unhandled request exceptions with tracebacks. `sources.py` and `deck_generator.py` log source/model progress and output paths.
-- `templates/index.html` provides the interface structure. `static/app.js` submits the form, starts the returned PPTX download, and renders the folder-backed library. `static/app.css` contains responsive visual styles.
-- `pyproject.toml` and `uv.lock` define the Python dependencies. `setup.bat`, `run_app.bat`, and `.vscode/launch.json` support local setup, launch, and debugging.
+- `templates/index.html` provides the interface structure. `static/app.js` submits the form, restores and polls active jobs, offers cancellation, downloads completed PPTX files, and renders the deck library. `static/app.css` contains responsive visual styles.
+- `pyproject.toml` and `uv.lock` define the Python dependencies and Vercel queue-subscriber entrypoint.
 
 ## Request Flow
 
@@ -57,7 +65,7 @@ PPTX renderer: pptx_builder.py
 4. `deck_generator.py` runs research planning, bounded Tavily research, outline generation, and per-slide content generation as separate LangGraph stages. `rate_limit.py` reserves estimated capacity before every Gemini request.
 5. Pydantic validates the outline and deck, source IDs are checked against the source catalog, content density is checked, and one correction attempt is allowed.
 6. `pptx_builder.py` creates a candidate PowerPoint; `visual_qa.py` renders temporary slide previews and verifies text fit and slide bounds before the file is finalized.
-7. FastAPI returns the PowerPoint to API clients by default. The browser requests generation metadata, automatically downloads the deck, and displays successfully fetched web sources under “Relevant links”; the saved copy remains in the presentations folder.
+7. On Vercel, the API responds with a job ID; the browser polls Neon-backed job status, offers cancellation, and downloads the finished deck through the app. The job continues if the browser is closed. Locally, generation remains synchronous and saves to the presentations folder.
 
 ## Limits And Files
 
@@ -68,10 +76,10 @@ PPTX renderer: pptx_builder.py
 - Web research is optional: Off uses provided sources only; Light allows 1 search and up to 2 fetched pages; Standard allows 2 searches and up to 5 pages; Deep allows 3 searches and up to 8 pages. Search results alone are not cited; a page must be safely fetched and source-validated first.
 - Web research requires `TAVILY_API_KEY` in `.env` or the host environment. Search uses Tavily's basic search mode; the selected depth controls the per-request maximum searches and safely fetched pages. The generation result displays up to 10 search results per query, marking fetched pages cited in the presentation as relevant and showing unfetched or unreadable results as not assessed.
 - Up to 25 content slides plus one cover slide.
-- Output directory: `SLIDES_DATA_DIR/presentations/`; defaults to `app_data/presentations/` locally.
+- In local execution only, output directory defaults to `app_data/presentations/`; deployed decks are stored in Vercel Blob.
 
-Uploaded source text is sent to Google AI Studio. The in-memory limiter reserves at most 14 calls per rolling minute and 200,000 estimated tokens per minute, below the stated 15 RPM / 250,000 TPM quota. Output is capped at 8,000 tokens. Token accounting is approximate and does not include other users sharing the Google project.
+Uploaded source text is sent to Google AI Studio. In Vercel mode, extracted source text is also temporarily stored in Neon until the job reaches a terminal state. The in-memory limiter reserves at most 14 calls per rolling minute and 200,000 estimated tokens per minute, below the stated 15 RPM / 250,000 TPM quota. Output is capped at 8,000 tokens. Token accounting is approximate and does not include other users sharing the Google project.
 
 ## Vercel Limitation
 
-Vercel can run this synchronous app without Postgres, Queues, Blob, or a worker, provided generation completes before the function timeout. Its filesystem is temporary and instance-local: the PPTX is returned directly to the browser, but saved files and the library are not guaranteed to persist across function restarts or appear on other instances. For durable folder-based storage and a persistent library, deploy to a server/host that provides a persistent writable volume mounted as `SLIDES_DATA_DIR`. Keep secrets in the hosting provider's environment settings and do not commit `.env`.
+The Vercel deployment uses Neon, Vercel Queues, and a private Blob store for persistent background jobs. Hobby limits still apply, including the 300-second function maximum duration, queue-operation allowance, and Blob storage/transfer allowance. The app keeps synchronous generation and local-file storage for local development. Keep secrets in environment settings and do not commit `.env`.

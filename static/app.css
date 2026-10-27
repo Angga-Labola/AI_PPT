@@ -92,7 +92,7 @@ input[type="url"] { height: 45px; padding: 0 12px 0 36px; font-size: 12px; }
 .active-top h2 { margin: 12px 0 0; font: 600 22px "Space Grotesk", sans-serif; }
 .status-pill { padding: 6px 9px; border: 1px solid #c8d6c2; border-radius: 99px; color: var(--green-dark); font-size: 10px; white-space: nowrap; }
 .status-pill[data-status="failed"] { border-color: #eac4b7; color: #a44732; }
-.status-pill[data-status="cancelled"] { border-color: var(--line); color: var(--muted); }
+.status-pill[data-status="cancelled"], .status-pill[data-status="cancel_requested"] { border-color: var(--line); color: var(--muted); }
 .active-progress { margin: 17px 0 10px; color: var(--muted); font-size: 12px; }
 .progress-track { height: 4px; overflow: hidden; background: #dce3d8; }
 .progress-track span { display: block; width: 26%; height: 100%; background: var(--green-dark); transition: width .3s ease; }
@@ -110,8 +110,8 @@ input[type="url"] { height: 45px; padding: 0 12px 0 36px; font-size: 12px; }
 .search-result-status.is-not_relevant { border-color: #eac4b7; color: #a44732; }
 .search-result-query, .search-result-detail { margin: 5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .quiet-button { padding: 5px 0; font-weight: 600; }
-.quiet-button:hover { color: #a44732; }
 .quiet-button:disabled { color: #9da69e; cursor: wait; }
+.quiet-button:hover { color: #a44732; }
 .library { display: flex; flex-direction: column; min-width: 0; padding-top: 5px; padding-left: clamp(24px, 4vw, 48px); border-left: 1px solid var(--line); }
 .library-heading { display: flex; align-items: flex-end; justify-content: space-between; margin: 0 0 20px; }
 .library-heading h2 { margin: 11px 0 0; font: 600 23px "Space Grotesk", sans-serif; }

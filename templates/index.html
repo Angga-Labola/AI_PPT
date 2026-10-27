@@ -69,7 +69,7 @@
           <div id="file-list" class="file-list" role="list" aria-label="Uploaded documents" aria-live="polite"></div>
 
           <div class="form-foot">
-            <span class="privacy-note"><span aria-hidden="true">◈</span> Sources go to Gemini; decks stay local</span>
+            <span class="privacy-note"><span aria-hidden="true">◈</span> Sources are processed for your presentation; completed decks stay in your library</span>
             <button id="submit-button" class="primary-button" type="submit"><span>Draft presentation</span><span class="button-arrow" aria-hidden="true">↗</span></button>
           </div>
         </form>
@@ -79,7 +79,7 @@
           <div class="active-top"><div><div class="eyebrow"><span>02</span> IN PROGRESS</div><h2 id="active-title">Preparing your deck</h2></div><span id="status-pill" class="status-pill">Queued</span></div>
           <p id="active-progress" class="active-progress">Waiting for the worker</p>
           <div class="progress-track"><span id="progress-bar"></span></div>
-          <div class="active-actions"><span id="active-error" class="active-error"></span></div>
+          <div class="active-actions"><span id="active-error" class="active-error"></span><button id="cancel-job" class="quiet-button" type="button" hidden>Cancel job</button></div>
           <section id="relevant-links" class="relevant-links" aria-labelledby="relevant-links-title" hidden>
             <h3 id="relevant-links-title">Web search results</h3>
             <ul id="search-result-list"></ul>
@@ -91,11 +91,11 @@
         <div class="library-heading"><div><div class="eyebrow"><span>03</span> YOUR LIBRARY</div><h2 id="library-title">Recent decks</h2></div><span id="deck-count" class="deck-count">0</span></div>
         <div id="deck-list" class="deck-list" aria-live="polite"></div>
         <div id="empty-library" class="empty-library"><span class="empty-mark" aria-hidden="true">◫</span><p>Your next great deck<br>starts with a source.</p></div>
-        <div class="library-bottom"><span class="storage-mark" aria-hidden="true">●</span> Stored locally on this machine</div>
+        <div class="library-bottom"><span class="storage-mark" aria-hidden="true">●</span> Saved presentation library</div>
       </aside>
     </main>
     <footer class="site-footer"><span>FIELDNOTES SLIDE STUDIO</span><span>BUILT FOR THE MOMENT AFTER RESEARCH</span></footer>
   </div>
-  <script src="/static/app.js?v=search-result-status-1" defer></script>
+  <script src="/static/app.js?v=background-jobs-1" defer></script>
 </body>
 </html>

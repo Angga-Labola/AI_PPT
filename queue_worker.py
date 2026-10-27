@@ -1,0 +1,106 @@
+import asyncio
+
+from vercel import blob
+from vercel.queue import subscribe
+
+import job_store
+from config import OUTPUT_DIR
+from deck_generator import GenerationCancelled, generate_presentation
+from deck_queue import DeckJobMessage, deck_jobs
+from logging_config import configure_logging
+
+
+logger = configure_logging().getChild("queue_worker")
+PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+async def _keep_job_lease(job_id: str) -> None:
+    while True:
+        await asyncio.sleep(20)
+        if await asyncio.to_thread(job_store.heartbeat_or_cancel, job_id):
+            return
+
+
+@subscribe(
+    topic=deck_jobs,
+    consumer_group="deck-generator",
+    max_attempts=2,
+    max_concurrency=1,
+)
+async def process_deck_job(message: DeckJobMessage) -> None:
+    await asyncio.to_thread(job_store.initialize_job_store)
+    job = await asyncio.to_thread(job_store.claim_job, message.job_id)
+    if job is None:
+        logger.info("Queue delivery for %s is already claimed or terminal", message.job_id)
+        return
+
+    payload = job["payload"]
+    try:
+        relevant_links: list[dict[str, str]] = []
+        search_results: list[dict[str, str]] = []
+        research_stats: dict[str, int] = {}
+        lease_task = asyncio.create_task(_keep_job_lease(message.job_id))
+        try:
+            output_path = await asyncio.to_thread(
+                generate_presentation,
+                message.job_id,
+                payload["source_text"],
+                payload["source_urls"],
+                payload["audience"],
+                payload["goal"],
+                payload["source_catalog"],
+                payload["research_depth"],
+                relevant_links,
+                research_stats,
+                search_results,
+                lambda: job_store.heartbeat_or_cancel(message.job_id),
+            )
+        finally:
+            lease_task.cancel()
+            try:
+                await lease_task
+            except asyncio.CancelledError:
+                pass
+        if await asyncio.to_thread(job_store.heartbeat_or_cancel, message.job_id):
+            await asyncio.to_thread(job_store.mark_job_cancelled, message.job_id)
+            return
+        blob_pathname = f"decks/{message.job_id}/{output_path.name}"
+        uploaded = await blob.put_blob(
+            blob_pathname,
+            output_path.read_bytes(),
+            access="private",
+            content_type=PPTX_MEDIA_TYPE,
+            allow_overwrite=True,
+        )
+        metadata = {
+            "title": output_path.stem.rsplit("-", 1)[0].replace("-", " ").title(),
+            "relevant_links": relevant_links,
+            "search_results": search_results,
+            "research_stats": research_stats,
+            "source_warnings": payload["source_warnings"],
+            "research_depth": payload["research_depth"],
+        }
+        completed = await asyncio.to_thread(
+            job_store.finish_job,
+            message.job_id,
+            output_path.name,
+            uploaded.pathname,
+            metadata,
+        )
+        if not completed:
+            await blob.delete_blob(uploaded.pathname)
+            await asyncio.to_thread(job_store.mark_job_cancelled, message.job_id)
+        logger.info("Queue job %s finished", message.job_id)
+    except GenerationCancelled:
+        await asyncio.to_thread(job_store.mark_job_cancelled, message.job_id)
+        logger.info("Queue job %s was cancelled", message.job_id)
+    except Exception as error:
+        should_retry = await asyncio.to_thread(
+            job_store.record_job_error,
+            message.job_id,
+            "Generation failed. Check server logs.",
+        )
+        if should_retry:
+            logger.exception("Queue job %s failed; requesting a queue retry", message.job_id)
+            raise
+        logger.exception("Queue job %s failed permanently", message.job_id)

@@ -63,6 +63,16 @@ class FakeModel:
 
 
 class DeckWorkflowTests(unittest.TestCase):
+    def test_cancellation_stops_before_the_next_model_call(self) -> None:
+        callback = deck_generator.GeminiCapacityCallback("cancel-test", lambda: True)
+        with (
+            patch.object(deck_generator, "reserve_gemini_capacity") as reserve,
+            self.assertRaises(deck_generator.GenerationCancelled),
+        ):
+            callback.on_chat_model_start({}, [])
+
+        reserve.assert_not_called()
+
     def test_runs_outline_content_validation_and_visual_stages(self) -> None:
         with tempfile.TemporaryDirectory() as output:
             model = FakeModel()

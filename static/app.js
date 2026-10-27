@@ -8,6 +8,7 @@ const activePanel = document.querySelector("#active-panel");
 const activeTitle = document.querySelector("#active-title");
 const activeProgress = document.querySelector("#active-progress");
 const activeError = document.querySelector("#active-error");
+const cancelJobButton = document.querySelector("#cancel-job");
 const relevantLinksPanel = document.querySelector("#relevant-links");
 const searchResultList = document.querySelector("#search-result-list");
 const statusPill = document.querySelector("#status-pill");
@@ -16,6 +17,10 @@ const progressBar = document.querySelector("#progress-bar");
 const deckList = document.querySelector("#deck-list");
 const emptyLibrary = document.querySelector("#empty-library");
 const deckCount = document.querySelector("#deck-count");
+let activeJobId = null;
+let activePollTimer = null;
+let downloadWhenJobCompletes = false;
+const ACTIVE_JOB_STORAGE_KEY = "fieldnotes-active-job";
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
@@ -118,10 +123,18 @@ function renderGenerationState({ title, status, message, error = "", complete = 
   activeTitle.textContent = title;
   activeProgress.textContent = message;
   statusPill.textContent = status;
-  statusPill.dataset.status = error ? "failed" : complete ? "completed" : "running";
+  const statusKey = status.toLowerCase().replaceAll(" ", "_");
+  statusPill.dataset.status = error
+    ? "failed"
+    : complete
+      ? "completed"
+      : ["queued", "running", "cancel_requested", "cancelled"].includes(statusKey)
+        ? statusKey
+        : "running";
   activeError.textContent = error;
-  progressTrack.classList.toggle("is-moving", !complete && !error);
-  progressBar.style.width = complete ? "100%" : error ? "0%" : "26%";
+  const terminal = complete || error || statusKey === "cancelled";
+  progressTrack.classList.toggle("is-moving", !terminal);
+  progressBar.style.width = complete ? "100%" : terminal ? "0%" : "26%";
 }
 
 function renderDeck(deck) {
@@ -170,6 +183,75 @@ async function loadDecks() {
   deckList.replaceChildren(...decks.map(renderDeck));
   deckCount.textContent = String(decks.length);
   emptyLibrary.hidden = decks.length > 0;
+}
+
+function showJob(job, shouldDownload = false) {
+  activeJobId = job.job_id;
+  downloadWhenJobCompletes = shouldDownload;
+  const active = ["queued", "running", "cancel_requested"].includes(job.status);
+  const complete = job.status === "completed";
+  const message = {
+    queued: "Queued on Vercel. You can close this page; the job will keep running.",
+    running: "The background worker is generating your slides. You can close this page.",
+    cancel_requested: "Cancellation requested. Any Gemini call already in progress must finish first.",
+    completed: "Your PowerPoint is saved in the presentation library.",
+    failed: "The presentation could not be generated.",
+    cancelled: "The generation job was cancelled.",
+  }[job.status] || "Checking generation status.";
+  renderGenerationState({
+    title: job.metadata?.title || job.filename || "Creating your presentation",
+    status: job.status.replaceAll("_", " "),
+    message,
+    error: job.error || "",
+    complete,
+  });
+  activeError.textContent = job.error || "";
+  cancelJobButton.hidden = !["queued", "running"].includes(job.status);
+  cancelJobButton.disabled = false;
+  submitButton.disabled = active;
+  submitButton.querySelector("span:first-child").textContent = active
+    ? "Job in progress"
+    : "Draft presentation";
+
+  if (complete) {
+    renderSearchResults(
+      job.metadata?.search_results || job.metadata?.relevant_links || [],
+      job.metadata?.research_depth || "off",
+    );
+    if (downloadWhenJobCompletes && job.filename) {
+      const link = document.createElement("a");
+      link.href = `/api/decks/${encodeURIComponent(job.filename)}/download`;
+      link.download = job.filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      downloadWhenJobCompletes = false;
+    }
+    localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+    activeJobId = null;
+    loadDecks().catch((error) => showError(error.message));
+    return false;
+  }
+  if (["failed", "cancelled"].includes(job.status)) {
+    localStorage.removeItem(ACTIVE_JOB_STORAGE_KEY);
+    activeJobId = null;
+    return false;
+  }
+  return true;
+}
+
+async function pollJob(jobId, shouldDownload = false) {
+  if (activePollTimer) window.clearTimeout(activePollTimer);
+  try {
+    const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+    if (!showJob(job, shouldDownload)) return;
+  } catch (error) {
+    activeError.textContent = error.message;
+  }
+  activePollTimer = window.setTimeout(
+    () => pollJob(jobId, downloadWhenJobCompletes),
+    2500,
+  );
 }
 
 fileInput.addEventListener("change", () => {
@@ -239,6 +321,12 @@ form.addEventListener("submit", async (event) => {
       const responseText = await response.text();
       throw new Error(responseText || "The server returned an unexpected response.");
     }
+    if (generation.job_id) {
+      localStorage.setItem(ACTIVE_JOB_STORAGE_KEY, generation.job_id);
+      showJob(generation, true);
+      await pollJob(generation.job_id, true);
+      return;
+    }
     if (generation.download_url) {
       const link = document.createElement("a");
       link.href = generation.download_url;
@@ -253,7 +341,6 @@ form.addEventListener("submit", async (event) => {
         status: "relevant",
         status_detail: "Cited in the presentation.",
       }));
-    const links = generation.relevant_links || [];
     const stats = generation.research_stats || {};
     const statusMessage = generation.status_message
       || (researchDepth !== "off" && results.length === 0
@@ -284,14 +371,33 @@ form.addEventListener("submit", async (event) => {
       error: error.message,
     });
   } finally {
-    submitButton.disabled = false;
-    buttonText.textContent = "Draft presentation";
+    if (!activeJobId) {
+      submitButton.disabled = false;
+      buttonText.textContent = "Draft presentation";
+    }
+  }
+});
+
+cancelJobButton.addEventListener("click", async () => {
+  if (!activeJobId) return;
+  cancelJobButton.disabled = true;
+  try {
+    await api(`/api/jobs/${encodeURIComponent(activeJobId)}/cancel`, { method: "POST" });
+    await pollJob(activeJobId);
+  } catch (error) {
+    activeError.textContent = error.message;
+    cancelJobButton.disabled = false;
   }
 });
 
 async function initialize() {
   try {
     await loadDecks();
+    const storedJobId = localStorage.getItem(ACTIVE_JOB_STORAGE_KEY);
+    if (storedJobId) {
+      const job = await api(`/api/jobs/${encodeURIComponent(storedJobId)}`);
+      if (showJob(job)) pollJob(job.job_id);
+    }
   } catch (error) {
     showError(error.message);
   }
