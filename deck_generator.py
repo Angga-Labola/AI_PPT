@@ -372,23 +372,45 @@ def generate_presentation(
         }
 
     def generate_outline(state: WorkflowState) -> WorkflowState:
-        prompt = (
-            f"{SYSTEM_PROMPT}\n"
-            "Stage: create a presentation outline only. For each slide, provide a short "
-            "title and 3 to 5 key points, each with supporting source IDs. Do not write "
-            "finished slide copy yet. Return JSON with title, subtitle, and slides; each "
-            "slide has title and key_points, and each key point has text and sources.\n"
-            f"Audience: {state.get('audience') or 'General audience'}\n"
-            f"Goal: {state.get('goal') or 'Inform and explain the key ideas'}\n"
-            f"Source catalog:\n{json.dumps(state['source_catalog'], ensure_ascii=False)}\n"
-            f"SOURCE MATERIAL\n{state['source_text']}\n"
-            f"ADDITIONAL WEB RESEARCH\n{state.get('research_context', '')}"
-        )
-        outline = _parse_model_output(
-            _model_call(model, request_id, "outline", prompt, cancel_check),
-            DeckOutline,
-        )
-        return {"outline": outline}
+        correction = ""
+        for attempt in range(2):
+            prompt = (
+                f"{SYSTEM_PROMPT}\n"
+                "Stage: create a presentation outline only. For each slide, provide a short "
+                f"title and 3 to 5 key points, each with supporting source IDs. Create at "
+                f"least 5 and at most {MAX_DECK_SLIDES} slides; never return fewer than 5. "
+                "Do not write finished slide copy yet. Return JSON with title, subtitle, "
+                "and slides; each slide has title and key_points, and each key point has "
+                "text and sources.\n"
+                f"Audience: {state.get('audience') or 'General audience'}\n"
+                f"Goal: {state.get('goal') or 'Inform and explain the key ideas'}\n"
+                f"Source catalog:\n{json.dumps(state['source_catalog'], ensure_ascii=False)}\n"
+                f"SOURCE MATERIAL\n{state['source_text']}\n"
+                f"ADDITIONAL WEB RESEARCH\n{state.get('research_context', '')}\n"
+                f"Correction required: {correction or 'None'}"
+            )
+            try:
+                outline = _parse_model_output(
+                    _model_call(model, request_id, "outline", prompt, cancel_check),
+                    DeckOutline,
+                )
+            except ValueError as error:
+                if attempt:
+                    raise ValueError(
+                        f"The generated outline was invalid after one correction: {error}"
+                    ) from error
+                correction = (
+                    "The previous outline did not satisfy the required schema. Return at "
+                    f"least 5 distinct slides (no more than {MAX_DECK_SLIDES}), each with "
+                    "a title and 3 to 5 key points with valid source IDs."
+                )
+                logger.warning(
+                    "Request %s: outline failed validation; retrying once",
+                    request_id,
+                )
+                continue
+            return {"outline": outline}
+        raise RuntimeError("Outline generation ended without a result.")
 
     def generate_content(state: WorkflowState) -> WorkflowState:
         outline = state["outline"]

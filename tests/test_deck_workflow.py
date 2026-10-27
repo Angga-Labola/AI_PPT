@@ -106,6 +106,40 @@ class DeckWorkflowTests(unittest.TestCase):
             self.assertIn("Slide 5 title: Slide 5", model.prompts[-1])
             render.assert_called_once()
 
+    def test_retries_outline_when_model_returns_too_few_slides(self) -> None:
+        incomplete_outline = {
+            "title": "A Staged Test Deck",
+            "subtitle": "A workflow regression check",
+            "slides": [
+                {
+                    "title": "Introduction",
+                    "key_points": [
+                        {"text": "Grounded introductory point.", "sources": ["S1"]}
+                        for _ in range(3)
+                    ],
+                }
+            ],
+        }
+        model = FakeModel([json.dumps(incomplete_outline), *_content_responses()])
+        with tempfile.TemporaryDirectory() as output:
+            with (
+                patch.object(deck_generator, "API_KEY", "configured"),
+                patch.object(deck_generator, "ChatGoogleGenerativeAI", return_value=model),
+                patch.object(deck_generator, "OUTPUT_DIR", Path(output)),
+                patch.object(deck_generator, "build_presentation", side_effect=_build_candidate),
+                patch.object(deck_generator, "render_presentation_previews", return_value=6),
+            ):
+                path = deck_generator.generate_presentation(
+                    request_id="outline-retry-test",
+                    source_text="Test source material.",
+                    source_urls=[],
+                    source_catalog={"S1": "Test source"},
+                )
+                self.assertTrue(path.is_file(), f"Missing generated file {path}")
+
+        self.assertEqual(len(model.prompts), 7)
+        self.assertIn("at least 5 distinct slides", model.prompts[1])
+
     def test_rejects_unknown_citation_sources(self) -> None:
         deck = deck_generator.SlideDeck.model_validate(
             {
