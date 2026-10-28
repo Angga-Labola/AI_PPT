@@ -27,7 +27,7 @@ body {
 button, textarea, input { font: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, .upload-zone:focus-within { outline: 3px solid rgba(161, 139, 96, .65); outline-offset: 3px; }
 .shell { width: min(1240px, calc(100% - 64px)); margin: 0 auto; }
-.topbar { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--line); }
+.topbar { min-height: 76px; display: flex; align-items: center; justify-content: center; gap: 24px; border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: 11px; color: var(--ink); text-decoration: none; font: 600 17px "Space Grotesk", sans-serif; }
 .brand b { color: var(--muted); font-weight: 500; }
 .brand-mark { position: relative; display: inline-grid; place-items: center; width: 26px; height: 26px; background: #3e5641; border-radius: 7px 7px 7px 2px; }
@@ -148,7 +148,7 @@ input[type="url"] { height: 45px; padding: 0 12px 0 36px; font-size: 12px; }
 @keyframes progress { from { transform: translateX(-20%); } to { transform: translateX(275%); } }
 @media (max-width: 760px) {
   .shell { width: min(100% - 36px, 600px); }
-  .topbar { min-height: 65px; flex-wrap: wrap; justify-content: space-between; padding: 12px 0; }
+  .topbar { min-height: 65px; flex-wrap: wrap; justify-content: center; padding: 12px 0; }
   .site-nav { order: 3; width: 100%; justify-content: space-around; gap: 10px; border-top: 1px solid var(--line); }
   .site-nav a { padding: 12px 4px 5px; }
   .topbar-meta { gap: 6px; font-size: 10px; }

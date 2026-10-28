@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#000000">
-  <title>Fieldnotes Slide Studio</title>
+  <title>AI PowerPoint Generator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -15,26 +15,19 @@
   <div class="shell">
     <!-- Header and links to the shared apps website. -->
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Fieldnotes Slide Studio home">
-        <span class="brand-mark" aria-hidden="true"><i></i></span>
-        <span>Fieldnotes <b>Studio</b></span>
-      </a>
       <nav class="site-nav" aria-label="Main navigation">
         <a href="https://angga-labola.github.io/index.html">Home</a>
         <a href="https://angga-labola.github.io/creeds.html">Creeds</a>
         <a href="https://angga-labola.github.io/articles.html">Articles</a>
         <a href="https://angga-labola.github.io/apps.html" aria-current="page">Apps</a>
       </nav>
-      <div class="topbar-meta"><span class="signal-dot"></span><span>Slide workspace</span><span class="meta-divider"></span><span>Gemini 3.5 Flash-Lite</span></div>
     </header>
 
     <!-- Main form: IDs here are looked up by static/app.js. Keep them in sync. -->
     <main class="layout">
       <section class="composer" aria-labelledby="page-title">
         <div class="eyebrow"><span>01</span> NEW PRESENTATION</div>
-        <h1 id="page-title">Turn your sources<br>into a <em>story.</em></h1>
-        <p class="intro">Bring the raw material. Leave with a deck worth presenting.</p>
-
+        
         <form id="deck-form">
           <label class="field-label" for="source-text">Your notes <span>Optional</span></label>
           <textarea id="source-text" name="text" rows="6" placeholder="Paste research, a brief, meeting notes, or a rough idea..."></textarea>
@@ -64,7 +57,7 @@
           <div class="input-grid">
             <div class="source-block">
               <label class="field-label" for="source-url">Web sources <span>Optional · up to 10</span></label>
-              <div class="url-wrap"><span class="url-prefix" aria-hidden="true">↗</span><textarea id="source-url" name="url" rows="3" placeholder="One public URL per line&#10;https://example.com/article"></textarea></div>
+              <div class="url-wrap"><textarea id="source-url" name="url" rows="3" placeholder="One public URL per line&#10;https://example.com/article"></textarea></div>
             </div>
             <div class="source-block">
               <span class="field-label">Documents <span>Optional</span></span>
@@ -105,7 +98,7 @@
         <div class="library-bottom"><span class="storage-mark" aria-hidden="true">●</span> Saved presentation library</div>
       </aside>
     </main>
-    <footer class="site-footer"><span>FIELDNOTES SLIDE STUDIO</span><span>BUILT FOR THE MOMENT AFTER RESEARCH</span></footer>
+    
   </div>
   <!-- defer runs the app code after the page markup has been read. -->
   <script src="/static/app.js?v=background-jobs-1" defer></script>
